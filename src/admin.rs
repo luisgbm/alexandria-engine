@@ -249,6 +249,7 @@ struct Document {
     html: String,
     revision: String,
     publication_status: String,
+    has_saved_draft: bool,
     trashed: bool,
     permalink_locked: bool,
 }
@@ -256,8 +257,42 @@ struct Store {
     root: PathBuf,
     site: Site,
     entries: BTreeMap<String, Document>,
+    published_fingerprints: BTreeMap<String, String>,
 }
 
+// Compare editorial content, not save bookkeeping or draft/published status.
+fn publication_fingerprint(metadata: &Metadata, body: &str, base: &str) -> Result<String> {
+    let mut value = serde_json::to_value(metadata)?;
+    let object = value.as_object_mut().unwrap();
+    object.remove("status");
+    object.remove("modified_at");
+    if let Some(date) = metadata
+        .published_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+    {
+        object.insert("published_at".into(), serde_json::json!(date.timestamp()));
+    }
+    for key in ["categories", "tags", "legacy_urls"] {
+        if let Some(items) = object.get_mut(key).and_then(|v| v.as_array_mut()) {
+            items.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        }
+    }
+    if metadata.featured_image.as_deref().unwrap_or("").is_empty() {
+        for key in [
+            "featured_image",
+            "featured_image_alt",
+            "featured_image_caption",
+        ] {
+            object.insert(key.into(), serde_json::Value::Null);
+        }
+    }
+    Ok(digest(&format!(
+        "{}\0{}",
+        serde_json::to_string(&value)?,
+        html::sanitize(body, base)
+    )))
+}
 impl Store {
     fn open(root: PathBuf) -> Result<Self> {
         let purged = editorial::purged_ids(&root)?;
@@ -268,15 +303,23 @@ impl Store {
             root.join("site.json")
         })?;
         let mut entries = BTreeMap::new();
+        let mut published_fingerprints = BTreeMap::new();
         for entry in load_entries(&root)? {
             if purged.contains(&entry.metadata.id) {
                 continue;
+            }
+            if entry.metadata.status == "published" {
+                published_fingerprints.insert(
+                    entry.metadata.id.clone(),
+                    publication_fingerprint(&entry.metadata, &entry.body, &site.base_url)?,
+                );
             }
             let serialized = serde_json::to_string(&entry.metadata)?;
             let revision = digest(&format!("{serialized}\0{}", entry.body));
             entries.insert(
                 entry.metadata.id.clone(),
                 Document {
+                    has_saved_draft: false,
                     trashed: false,
                     permalink_locked: entry.metadata.status == "published",
                     publication_status: entry.metadata.status.clone(),
@@ -324,6 +367,7 @@ impl Store {
             entries.insert(
                 id.into(),
                 Document {
+                    has_saved_draft: true,
                     trashed: if version.join("editorial.json").exists() {
                         read_json::<serde_json::Value>(&version.join("editorial.json"))?["trashed"]
                             .as_bool()
@@ -340,13 +384,35 @@ impl Store {
                 },
             );
         }
-        Ok(Self {
+        let mut store = Self {
             root,
             site,
             entries,
-        })
+            published_fingerprints,
+        };
+        store.refresh_draft_flags()?;
+        Ok(store)
     }
-    fn commit(&mut self, document: Document) -> Result<()> {
+    fn refresh_draft_flags(&mut self) -> Result<()> {
+        for (id, doc) in &mut self.entries {
+            doc.has_saved_draft = doc.publication_status != "published"
+                || self.published_fingerprints.get(id)
+                    != Some(&publication_fingerprint(
+                        &doc.metadata,
+                        &doc.html,
+                        &self.site.base_url,
+                    )?);
+        }
+        Ok(())
+    }
+    fn commit(&mut self, mut document: Document) -> Result<()> {
+        document.has_saved_draft = document.publication_status != "published"
+            || self.published_fingerprints.get(&document.metadata.id)
+                != Some(&publication_fingerprint(
+                    &document.metadata,
+                    &document.html,
+                    &self.site.base_url,
+                )?);
         validate_id(&document.metadata.id)?;
         validate_id(&document.revision)?;
         validate_schema(
@@ -585,8 +651,28 @@ pub async fn serve(
         "admin must bind only to loopback"
     );
     let app = make_app(content, &state, origin, rp)?;
-    if let Some(p) = &app.publisher {
-        p.sync_store(&mut app.store.lock().unwrap())?;
+    {
+        let store = app.store.lock().unwrap();
+        let visible = store
+            .entries
+            .values()
+            .filter(|d| !d.trashed)
+            .collect::<Vec<_>>();
+        println!(
+            "Editorial status: {} published, {} unpublished articles/pages, {} published with pending changes.",
+            visible
+                .iter()
+                .filter(|d| d.publication_status == "published")
+                .count(),
+            visible
+                .iter()
+                .filter(|d| d.publication_status != "published")
+                .count(),
+            visible
+                .iter()
+                .filter(|d| d.publication_status == "published" && d.has_saved_draft)
+                .count()
+        );
     }
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!("Admin listening on {address}; credentials and request bodies are not logged.");
@@ -616,7 +702,11 @@ fn make_app(content: PathBuf, state: &Path, origin: String, rp: String) -> Resul
         None => u.host_str().unwrap().into(),
     };
     let user = Uuid::parse_str(&setting(&db, "user_id")?)?;
-    let store = Store::open(content)?;
+    let mut store = Store::open(content)?;
+    let publisher = publishing::Publisher::open(state)?;
+    if let Some(p) = &publisher {
+        p.sync_store(&mut store)?;
+    }
     let environment = std::env::var("ALEXANDRIA_ENVIRONMENT").unwrap_or_else(|_| "staging".into());
     ensure!(
         ["staging", "production"].contains(&environment.as_str()),
@@ -653,7 +743,7 @@ fn make_app(content: PathBuf, state: &Path, origin: String, rp: String) -> Resul
         previews: Mutex::new(HashMap::new()),
         upload_slots: Arc::new(tokio::sync::Semaphore::new(2)),
         rate: Mutex::new(VecDeque::new()),
-        publisher: publishing::Publisher::open(state)?,
+        publisher,
         analytics_db: std::env::var_os("ALEXANDRIA_ANALYTICS_DB")
             .map(PathBuf::from)
             .unwrap_or_else(|| state.join("analytics.sqlite")),
@@ -1079,7 +1169,7 @@ async fn list_entries(
 ) -> ApiResult<Json<serde_json::Value>> {
     app.session(&headers, false)?;
     let store = app.store.lock().unwrap();
-    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.metadata.status=="draft","trashed":d.trashed,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
+    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.has_saved_draft,"trashed":d.trashed,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
     Ok(Json(serde_json::json!({"entries":entries})))
 }
 async fn get_entry(
@@ -1174,6 +1264,7 @@ async fn create_entry(
         html: String::new(),
         revision: Uuid::new_v4().simple().to_string(),
         publication_status: "draft".into(),
+        has_saved_draft: true,
         trashed: false,
         permalink_locked: false,
     };
@@ -1183,7 +1274,7 @@ async fn create_entry(
         "draft_created",
         &document.metadata.id,
     )?;
-    Ok(Json(document))
+    Ok(Json(store.entries[&document.metadata.id].clone()))
 }
 #[derive(Deserialize)]
 struct Save {
@@ -1340,7 +1431,7 @@ async fn save_entry(
     document.revision = Uuid::new_v4().simple().to_string();
     store.commit(document.clone())?;
     audit(&app.db.lock().unwrap(), "draft_saved", &id)?;
-    Ok(Json(document))
+    Ok(Json(store.entries[&document.metadata.id].clone()))
 }
 
 fn media_file(content: &Path, path: &str) -> Result<PathBuf> {
