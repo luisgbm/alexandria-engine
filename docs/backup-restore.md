@@ -180,3 +180,17 @@ Old full export archives, the PC's duplicate previous repository, the returned
 restore-test archive and extracted server restore/repository/staging copies were
 removed. Validation reports, recovery material and the original WordPress backup
 were preserved. The live staging release was unchanged.
+
+## Fresh-VPS rehearsal — 2026-10-23
+
+A subsequent [fresh Ubuntu VM restore](fresh-vps-restore.md) passed using the
+actual encrypted PC repository. It provisioned new accounts/packages, restored
+real filesystem paths/systemd services, validated 21,480 manifest entries, tested
+publication/rollback/editor APIs and survived a VM reboot. The private VM had no
+public IP; its resource group was removed after saving evidence. Hardware passkey
+sign-in and certificate renewal on the clone remain explicitly outside that test.
+
+The tested recovery point was 06:43 Brasília on October 23 and contains one
+passkey, ten editorial versions and one upload. Later staging work is outside
+that snapshot. Take and verify a new off-server backup before production; do not
+confuse transfer/check success with capture of a new recovery point.

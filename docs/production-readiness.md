@@ -115,7 +115,12 @@ launch. Trash deliberately does not remove already published content.
    400 days. Keep production data separate. Confirm these retention choices and
    the responsible contact before publishing a notice; do not claim legal
    compliance merely because addresses are hashed in aggregates.
-7. **Perform the fresh-VPS restore rehearsal (next milestone).** Restore onto a
+7. **Fresh-VPS rehearsal completed — see [results](fresh-vps-restore.md).**
+   A disposable private Ubuntu VM was restored from the encrypted PC repository;
+   services, rebuild, editor APIs, publication/rollback and reboot checks passed.
+   Hardware passkey login and ACME renewal on the clone were not exercised.
+   The recovery point predates later work: capture a fresh verified off-server
+   backup before launch. The following describes the rehearsal scope. Restore onto a
    disposable clean Ubuntu environment using the PC encrypted copy and separately
    held key; provision users/packages/Nginx/systemd/TLS/logging and prove build,
    authentication, upload, publishing, rollback and analytics. Existing drill

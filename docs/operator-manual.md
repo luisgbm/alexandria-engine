@@ -22,13 +22,14 @@ from a historical setup example. Its destination must end in `/public`.
 - [Publishing, atomic activation and rollback](staging-publishing.md).
 - [Desktop and physical-phone acceptance](editorial-acceptance.md).
 - [Encrypted monthly PC backups and application restore drill](backup-restore.md).
+- [Completed fresh-VPS restore rehearsal and limitations](fresh-vps-restore.md).
 - [Lost-key recovery drill](admin-recovery-drill.md).
 - [Portable offline recovery copy](portable-admin-recovery.md).
 - [Analytics ingestion, rotation and retention](analytics-staging.md).
 - [WordPress inventory and known broken links](migration-inventory.md).
 
-Production hostname transition and a fresh-VPS restore rehearsal remain launch
-work. Staging credentials and recovery artifacts must not be copied blindly to a
+The fresh-VPS restore rehearsal passed; see its evidence and limitations above.
+Production hostname transition and a fresh verified backup remain launch work. Staging credentials and recovery artifacts must not be copied blindly to a
 new WebAuthn relying-party hostname. Bootstrap the final hostname, enroll two
 passkeys, and export corresponding recovery material before relying on it.
 
