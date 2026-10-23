@@ -29,6 +29,13 @@ provides private staging traffic summaries; see [analytics](docs/analytics-stagi
 Production activation remains a subsequent milestone. Saving an editorial draft never
 activates a public release.
 
+## Deployment
+
+New installations use the [provider-neutral installer and runbook](docs/portable-deployment.md)
+and [example configuration](ops/deployment.example.json). The supported target is
+Ubuntu 24.04 x86-64 with systemd; no Azure services or cloud CLI are required.
+Existing staging scripts remain historical installation-specific helpers.
+
 ## Build and test
 
 Install a recent stable Rust toolchain, then run:

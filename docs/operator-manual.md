@@ -245,3 +245,11 @@ The admin dashboard now reads private Nginx log aggregates. See
 [analytics operations and retention](analytics-staging.md) for the ingestion
 timer, private state, counting limitations, rotation and validation. Production
 statistics must start separately from this staging dataset.
+
+## Installing on another provider
+
+Use the [portable deployment runbook](portable-deployment.md) for a new VPS.
+It replaces the installation-specific staging scripts for new deployments and
+provides configurable services, Nginx, encrypted backups and a PC pull client.
+The existing staging services and scheduled backup continue using their current
+configuration until an explicit migration.
