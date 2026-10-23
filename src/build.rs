@@ -3,6 +3,7 @@ use anyhow::{Context, Result, ensure};
 use chrono::DateTime;
 use kuchiki::traits::TendrilSink;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -76,11 +77,26 @@ impl Writer<'_> {
 
 fn template(site: &Site, path: &str, title: &str, body: &str, description: &str) -> String {
     let e = html::escape;
+    let version = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes))[..12].to_owned();
+    let css_version = version(include_bytes!("../templates/site.css"));
+    let menu_version = version(include_bytes!("../templates/menu.js"));
+    let search_version = version(include_bytes!("../templates/search.js"));
     let nav = site
         .navigation
         .iter()
         .filter(|n| n.path != "/search/" && !retired_feed(&n.path))
-        .map(|n| format!("<a href=\"{}\">{}</a>", e(&n.path), e(&n.title)))
+        .map(|n| {
+            let current = if n.path == path {
+                " aria-current=\"page\""
+            } else if (n.path != "/" && path.starts_with(&n.path))
+                || (n.path == "/" && path.starts_with("/page/"))
+            {
+                " aria-current=\"location\""
+            } else {
+                ""
+            };
+            format!("<a href=\"{}\"{current}>{}</a>", e(&n.path), e(&n.title))
+        })
         .collect::<Vec<_>>()
         .join(" ");
     let banner = site
@@ -105,7 +121,7 @@ fn template(site: &Site, path: &str, title: &str, body: &str, description: &str)
         brand
     };
     format!(
-        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{document_title}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><div class=\"site-top\">{brand}<form id=\"search-form\" role=\"search\" aria-label=\"Pesquisar no arquivo\" action=\"/\" method=\"get\"><label class=\"sr\" for=\"query\">Pesquisar no arquivo</label><input id=\"query\" name=\"q\" type=\"search\" placeholder=\"Pesquisar no arquivo…\" required><button type=\"submit\">Pesquisar</button></form></div>{banner}<nav aria-label=\"Principal\">{nav}</nav><noscript><p>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</p></noscript></header><main id=\"conteudo\"><section id=\"search-panel\" aria-labelledby=\"search-heading\" hidden><div class=\"search-toolbar\"><h2 id=\"search-heading\">Resultados da pesquisa</h2><button id=\"close-search\" type=\"button\">Fechar pesquisa</button></div><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol></section><div id=\"page-content\">{body}</div></main><footer>{}</footer><script src=\"/assets/search.js\" defer></script></body></html>\n",
+        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{document_title}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css?v={css_version}\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><button id=\"menu-toggle\" class=\"menu-toggle\" type=\"button\" aria-controls=\"primary-nav\" aria-expanded=\"false\" aria-label=\"Abrir menu\" hidden><span class=\"menu-icon\" aria-hidden=\"true\"></span></button><div class=\"site-top\">{brand}<form id=\"search-form\" role=\"search\" aria-label=\"Pesquisar no arquivo\" action=\"/\" method=\"get\"><label class=\"sr\" for=\"query\">Pesquisar no arquivo</label><input id=\"query\" name=\"q\" type=\"search\" placeholder=\"Pesquisar no arquivo…\" required><button type=\"submit\">Pesquisar</button></form></div>{banner}<nav id=\"primary-nav\" class=\"primary-nav\" aria-label=\"Principal\">{nav}</nav><noscript><p>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</p></noscript></header><main id=\"conteudo\"><section id=\"search-panel\" aria-labelledby=\"search-heading\" hidden><div class=\"search-toolbar\"><h2 id=\"search-heading\">Resultados da pesquisa</h2><button id=\"close-search\" type=\"button\">Fechar pesquisa</button></div><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol></section><div id=\"page-content\">{body}</div></main><footer>{}</footer><script src=\"/assets/menu.js?v={menu_version}\" defer></script><script src=\"/assets/search.js?v={search_version}\" defer></script></body></html>\n",
         e(description),
         e(&site.base_url),
         e(path),
@@ -358,6 +374,7 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
     copy_media(&content.join("media"), &content.join("media"), &mut writer)?;
     writer.file("/assets/site.css", include_str!("../templates/site.css"))?;
     writer.file("/assets/search.js", include_str!("../templates/search.js"))?;
+    writer.file("/assets/menu.js", include_str!("../templates/menu.js"))?;
     for e in &published {
         let m = &e.metadata;
         let path = m.permalink.as_deref().unwrap();

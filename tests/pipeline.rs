@@ -239,6 +239,16 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
         .unwrap();
     }
     let mut site = read_site(&content.join("site.json")).unwrap();
+    site.navigation = vec![
+        Navigation {
+            title: "Início".into(),
+            path: "/".into(),
+        },
+        Navigation {
+            title: "Artigo".into(),
+            path: "/preview-11/".into(),
+        },
+    ];
     site.homepage_sidebar_html =
         "<p>Custom <strong>sidebar</strong></p><script>unsafe()</script>".into();
     write_json(&content.join("site.json"), &site).unwrap();
@@ -268,6 +278,43 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
     );
     assert_eq!(parsed.select("nav a[href='/search/']").unwrap().count(), 0);
     assert_eq!(parsed.select("#search-panel[hidden]").unwrap().count(), 1);
+    let toggle = parsed.select_first("#menu-toggle").unwrap();
+    assert_eq!(
+        toggle.attributes.borrow().get("aria-controls"),
+        Some("primary-nav")
+    );
+    assert_eq!(
+        toggle.attributes.borrow().get("aria-expanded"),
+        Some("false")
+    );
+    assert_eq!(
+        parsed
+            .select_first("#primary-nav a[aria-current=page]")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href"),
+        Some("/")
+    );
+    assert!(release.join("public/assets/menu.js").is_file());
+    assert!(
+        parsed
+            .select_first("link[rel=stylesheet]")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href")
+            .unwrap()
+            .starts_with("/assets/site.css?v=")
+    );
+    assert!(
+        parsed
+            .select("script[src^='/assets/menu.js?v=']")
+            .unwrap()
+            .next()
+            .is_some()
+    );
+
     assert_eq!(
         fs::read_to_string(release.join("public/search/index.html")).unwrap(),
         home
@@ -275,6 +322,16 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
     let article = kuchiki::parse_html()
         .one(fs::read_to_string(release.join("public/preview-11/index.html")).unwrap());
     assert_eq!(article.select("header #search-form").unwrap().count(), 1);
+    assert_eq!(
+        article
+            .select_first("#primary-nav a[aria-current=page]")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href"),
+        Some("/preview-11/")
+    );
+
     assert_eq!(
         article
             .select_first("#page-content h1")

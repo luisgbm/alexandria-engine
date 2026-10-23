@@ -306,3 +306,35 @@ all three retired feed URLs return 404, regular pages and articles still return
 editorial hashes were unchanged. Nginx validation passed. The staging HTTP
 validator reads `retired_paths` from the build report, while retaining its former
 RSS checks when validating an older release without retired feed paths.
+
+## Responsive public navigation
+
+Desktop navigation is a pale green horizontal bar connected to the banner, with
+soft corners, hover/focus feedback and a highlighted current page/section.
+Homepage pagination marks Início as the current section. Link destinations and
+menu order continue to come from the existing site navigation catalog.
+
+At 40rem and below, a 44px hamburger button appears at the top left. It exposes
+`aria-controls`, `aria-expanded` and an updated accessible label. The links expand
+below the title/search row, above the banner; selecting a link, clicking outside,
+pressing Escape or changing breakpoints closes the menu. Escape returns focus to
+the button. This is a navigation disclosure, with normal links and keyboard tab
+order. Reduced-motion preferences disable the transitions. Without JavaScript,
+the links remain visible and usable rather than leaving a nonfunctional button.
+No external libraries, fonts or image assets are needed for the control.
+
+Public CSS and menu/search script URLs include a twelve-character SHA-256 content
+version query. This avoids stale styles/scripts when an existing browser has
+cached an earlier release under the same asset path. The files remain local and
+rebuilds remain deterministic; no external asset service or cache purge is needed.
+
+Staging verification: `release-20261023T193649-b1ac7ea433ba` passed 23,912
+internal-link checks across 1,095 pages and Nginx validation. Private editorial
+files and the published source snapshot were unchanged. Browser checks at 1280px
+and 390px confirmed the bar/current-page treatment, mobile 44px button at (16,16),
+closed/open states, Escape, outside-tap dismissal and navigation to Autor with
+the correct active link. No horizontal overflow occurred. The previously cached
+stylesheet was replaced by its content-versioned URL in the same browser session.
+Private screenshots are `admin-validation/responsive-menu-desktop-20261023.png`,
+`responsive-menu-mobile-closed-20261023.png` and
+`responsive-menu-mobile-open-20261023.png` under the operator backup folder.
