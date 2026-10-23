@@ -278,7 +278,7 @@ impl Store {
                     permalink_locked: entry.metadata.status == "published",
                     publication_status: entry.metadata.status.clone(),
                     metadata: entry.metadata,
-                    html: entry.body,
+                    html: html::normalize_more(&entry.body),
                     revision,
                 },
             );
@@ -331,7 +331,7 @@ impl Store {
                     permalink_locked: publication_status == "published"
                         || dir.join("published-path").exists(),
                     metadata,
-                    html: fs::read_to_string(version.join("body.html"))?,
+                    html: html::normalize_more(&fs::read_to_string(version.join("body.html"))?),
                     revision: revision.trim().into(),
                     publication_status,
                 },
