@@ -8,7 +8,8 @@ https://admin.52-153-234-132.sslip.io/. Neither needs an SSH tunnel. The Rust
 administrator listens only on `127.0.0.1:3001`, behind Nginx HTTPS, as the
 unprivileged `alexandria-admin` user.
 
-The current acceptance baseline is `staging-20261022T225033-d7d27da8ff2a`.
+The current cleaned staging release is `staging-clean-20261023-v3`; the prior
+acceptance baseline `staging-20261022T225033-d7d27da8ff2a` is retained for rollback.
 Always inspect `/srv/alexandria/staging/current`; never infer the active version
 from a historical setup example. Its destination must end in `/public`.
 
@@ -55,7 +56,8 @@ python scripts/validate_editorial_acceptance.py --output C:/Users/luisg/Backups/
 Get-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup' | Get-ScheduledTaskInfo
 ```
 
-The second command assumes the acceptance baseline has been restored. Do not run
+The second command targets the historical acceptance baseline, not the current
+cleaned staging release; it assumes that old baseline has been restored. Do not run
 it as an expectation against an intentionally published acceptance article.
 For complete URL validation use `scripts/validate_staging.py` with the **matching
 active release and its published content snapshot**, rather than today's private

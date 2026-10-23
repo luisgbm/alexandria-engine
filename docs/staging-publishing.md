@@ -118,3 +118,43 @@ Private reports are stored in the operator's `Backups/culturaespiritual` folder:
 `public-ip-rollback-validation.json`, `publishing-rollback-smoke.json`, and
 `publishing-active-smoke.json`. The published synthetic article remains available
 for review at `/artigos/validacao-staging-20261022/`.
+
+## Clean candidate activation — 2026-10-23
+
+Current release: `staging-clean-20261023-v3`, imported from the reviewed clean-v3
+production candidate. The one-time root console script
+`ops/deploy-clean-staging.py` registers the release/snapshot/history, verifies its
+hash using the publisher's algorithm and checks routing maps are unchanged. It
+uses the existing hash-verifying staging activation CLI (named `rollback-staging`
+for retained/registered releases) with the expected prior active ID. It does not
+manually change the symlink. The history records candidate import plus activation.
+
+Eight published article bodies and modification metadata in the staging base
+store were synchronized with the cleanup, after checking they had no conflicting
+editorial overlays. Original copies remain root-private at
+`/var/lib/alexandria-before-clean-staging-20261023`. The admin was stopped briefly
+for synchronization and restarted after activation. No credential data changed.
+
+Four test draft histories, three test uploads and all retained prior releases
+remain available on staging. They are absent from the cleaned public release.
+The previous release `staging-20261022T225033-d7d27da8ff2a` remains a rollback
+target; restoring it also restores its old public test article and old link bodies.
+
+Validation passed: 3,396 inventory URLs (2,643 content responses, 734 redirects,
+19 expected missing/private responses), all feed/sitemap/exact-byte checks, 20
+public-IP corrected-link/fixture checks, and 14 HTTPS/admin boundary checks.
+All eight generated articles contain the agreed changes. The Kuhn target returns
+200; the seven historical missing destinations remain 404 without broken inbound
+article links. Homepage SHA-256 is now
+`77ef7f4fa6b16288d89cbbc474ce8d3ac74148ea896f185611cb3da36610862c`.
+
+Private evidence: `/root/alexandria-clean-staging-urls-20261023.json` on alexandria;
+`clean-staging-links-20261023.json` and `clean-staging-http-20261023.json` in the
+PC's private admin-validation folder. The older editorial acceptance validator's
+hardcoded homepage hash targets the earlier acceptance baseline, so do not use it
+unchanged to assess this cleaned release.
+
+The owner reports the equivalent WordPress fixes are complete. This was recorded
+without accessing WordPress or the original server. The final migration export
+still needs to capture those edits. No DNS or original-site changes were made by
+this deployment.

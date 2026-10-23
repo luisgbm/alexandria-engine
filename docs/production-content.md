@@ -1,12 +1,16 @@
 # Clean production content candidate
 
-Prepared on alexandria on 2026-10-23, without activation or DNS/original-site changes.
+Prepared on alexandria on 2026-10-23. The clean-v3 output was subsequently
+registered and activated **on staging only** as `staging-clean-20261023-v3`; see
+[deployment validation](staging-publishing.md#clean-candidate-activation--2026-10-23).
+The production candidate directory itself remains private. No original-site or
+DNS changes were made.
 The private candidate directory is:
 
 `/var/lib/alexandria-production-candidate/20261023-clean-v3`
 
 - `content/`: independent portable content copy, including imported revision history.
-- `release/public/`: validated static output, not configured in any Nginx vhost.
+- `release/public/`: validated static output; a registered copy is now served by staging Nginx.
 - `preparation-report.json`: exclusion list and SHA-256 manifest of retained content.
 - `verification-report.json`: preservation and fixture-exclusion checks.
 

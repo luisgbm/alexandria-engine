@@ -89,3 +89,9 @@ DNS changes or server commands are needed for these editorial corrections.
 Tell the migration operator once WordPress edits are saved: the final export
 must incorporate them, and should not overwrite the approved candidate edits
 with an older WordPress snapshot.
+
+## Owner completion reported
+
+On 2026-10-23 the owner reported that all equivalent WordPress issues were fixed.
+No original-site/server verification was performed. Preserve those changes in the
+final WordPress export; the matching cleaned candidate is now deployed to staging.
