@@ -120,6 +120,25 @@ fn images(root: &Path, directory: &Path, rows: &mut Vec<(String, i64)>) -> Resul
     Ok(())
 }
 
+// WordPress sizes remain available at their existing URLs, but are not separate
+// library assets. Only collapse a size when its original actually exists.
+fn wordpress_size_original(path: &str) -> Option<String> {
+    if !path.starts_with("/wp-content/uploads/") {
+        return None;
+    }
+    let (stem, extension) = path.rsplit_once('.')?;
+    let (original, dimensions) = stem.rsplit_once('-')?;
+    let (width, height) = dimensions.split_once('x')?;
+    if width.is_empty()
+        || height.is_empty()
+        || !width.bytes().all(|c| c.is_ascii_digit())
+        || !height.bytes().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(format!("{original}.{extension}"))
+}
+
 pub(super) async fn list(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -134,6 +153,11 @@ pub(super) async fn list(
     let mut paths = Vec::new();
     let media = store.root.join("media");
     images(&media, &media, &mut paths)?;
+    let available: std::collections::BTreeSet<_> =
+        paths.iter().map(|(path, _)| path.clone()).collect();
+    paths.retain(|(path, _)| {
+        !wordpress_size_original(path).is_some_and(|original| available.contains(&original))
+    });
     paths.sort_by(|(a, a_modified), (b, b_modified)| {
         let stamp = |path: &str, modified: i64| {
             let recorded = data.get(path).and_then(|m| m.uploaded_at);
@@ -220,6 +244,21 @@ pub(super) async fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wordpress_sizes_only_group_imported_dimension_suffixes() {
+        assert_eq!(
+            wordpress_size_original("/wp-content/uploads/2012/a-150x150.jpg"),
+            Some("/wp-content/uploads/2012/a.jpg".into())
+        );
+        for path in [
+            "/uploads/a-150x150.jpg",
+            "/wp-content/uploads/a-cover.jpg",
+            "/wp-content/uploads/a-x150.jpg",
+            "/wp-content/uploads/a-150x.jpg",
+        ] {
+            assert_eq!(wordpress_size_original(path), None);
+        }
+    }
     #[test]
     fn library_links_roundtrip_unicode_and_reserved_filename_characters() {
         let name = "/uploads/ação #1?.png";

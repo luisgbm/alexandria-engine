@@ -148,3 +148,12 @@ before opening the uploaded image's metadata. If the upload succeeds but the
 refresh fails, the message says so rather than implying the upload failed.
 Regression coverage exercises more than one page, restart persistence, caption
 edits, duplicate uploads, and upload refresh with a pending search.
+
+## WordPress image sizes
+
+The library shows one original image instead of separate WordPress-generated
+`-WIDTHxHEIGHT` sizes when that original exists. A size without its original
+remains visible. This applies only to imported `wp-content/uploads` assets;
+native uploads are unchanged. Existing size files and URLs remain available
+for article HTML, responsive images, revision history, and rollback releases.
+This is library deduplication, not physical file deletion or storage savings.
