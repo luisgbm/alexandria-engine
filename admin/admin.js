@@ -9,12 +9,19 @@
   let environment = "staging", environmentLabel = "Ambiente de testes";
   let csrf = "", doc = null, entries = [], categories = [], dirty = false, previewTimer, previewGeneration = 0, bootstrap = "";
 
+  let noticeTimer;
   const notice = (text, error = false) => {
+    clearTimeout(noticeTimer);
     const status = $("notice");
     status.textContent = text;
     status.hidden = !text;
     status.classList.toggle("error", error);
     const local=$("image-notice");if($("image-dialog").open){local.textContent=text;local.hidden=!text;local.classList.toggle("error",error);}
+    // Keep errors and in-progress operations visible; dismiss completed feedback.
+    if(text && !error && !text.endsWith("…")) noticeTimer=setTimeout(()=>{
+      status.hidden=true;
+      if(local.textContent===text)local.hidden=true;
+    },5000);
   };
 
   // Mutation success is authoritative; a later refresh failure must not suggest
