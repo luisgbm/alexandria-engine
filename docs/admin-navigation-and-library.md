@@ -365,7 +365,7 @@ portrait on desktop and 240px width without overflow on mobile. Private screensh
 ## Per-insertion image width
 
 The image dialog has **Largura da imagem (px)** above **HTML para inserir**.
-Opening an image defaults to 320px. Choose an integer from 1 to 2400; invalid
+Opening an image defaults to 480px. Choose an integer from 1 to 2400; invalid
 values clear the generated snippet and disable HTML copying/insertion until
 corrected. Alt-text/caption edits regenerate the snippet without resetting the
 chosen width. Copying the plain image address remains independent of sizing.
@@ -388,7 +388,7 @@ release remains `release-20261023T194906-8c80b3e2439a`; no content was published
 
 The root-only `normalize-article-images` command applies the image defaults to
 current published posts and current editable post drafts. It preserves smaller
-explicit widths, caps larger/unspecified widths at 320px, adjusts numeric heights
+explicit widths, caps larger/unspecified widths at 480px, adjusts numeric heights
 proportionally, centers images/figures, and adds responsive image styles. Existing
 srcset URLs remain available with sizes updated for the smaller display width.
 Legacy featured images move into article HTML (an existing occurrence is reused).
@@ -430,3 +430,41 @@ missing paths; Nginx syntax and both public/admin HTTP checks passed. Browser
 checks confirmed a loaded, centered 320px image on desktop and mobile with no
 horizontal overflow. Private screenshot:
 `admin-validation/article-image-defaults-mobile-20261023.png`.
+
+
+## 480px default and removal of tags
+
+The current image-library default is 480px, still responsive and centered. The
+one-time article cleanup upgrades images carrying the previous 320px cleanup
+styles using original imported dimensions where available. This restores an
+original 329px image to 329px, for example, while a 584px image becomes 480px.
+Only dimensions are recovered; current prose, alt text, captions and publication
+metadata remain current. Images without an imported original use 480px. Custom
+widths remain possible when copying/inserting HTML. The author-page portrait is
+outside this post-only migration and remains at 240px.
+
+Etiquetas has been removed from the editor, save API and admin list search.
+Previously imported tag fields remain readable for old content and revision
+compatibility; the admin no longer edits or searches them. Categories remain.
+
+Segurança currently lists registered passkeys and allows enrollment. It does not
+yet offer removal/revocation. Removing a credential from a device password manager
+is separate from revoking its server registration. Do not use account recovery
+as a routine way to remove one key: that workflow revokes all keys and sessions.
+
+
+480px staging verification: release `release-20261023T202054-317f91629ea4`
+updated 213 published posts and created 214 editor revisions. All 252 public
+article images passed; 43 retain original sizes below 480px. Page files, site
+settings, image URLs/alt text and 774 historical revision files were unchanged.
+A second dry run returned zero changes. Recovery copy:
+`/root/alexandria-before-image-default-480-20261023T202051Z`.
+
+41 Rust tests passed (one root-only recovery test intentionally ignored); six
+JavaScript tests passed. Deployed HTML/JavaScript checks confirmed the 480px
+control/help/default and removal of tag controls/references. The build passed
+23,912 internal-link checks with no missing paths and Nginx validation passed.
+Browser checks measured a loaded centered image at 480px on desktop and 343.2px
+inside its 343.2px mobile container, with no horizontal overflow. Screenshot:
+`admin-validation/article-image-480-desktop-20261023.png`. Both passkeys remain
+registered; no credentials were changed.

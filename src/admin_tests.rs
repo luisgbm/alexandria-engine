@@ -1235,7 +1235,7 @@ async fn offline_recovery_revokes_old_access_and_enrolls_replacement() {
 }
 
 #[tokio::test]
-async fn editorial_pages_tags_revision_restore_and_trash_are_durable() {
+async fn editorial_pages_revision_restore_and_trash_are_durable() {
     let (_temp, app) = fixture();
     let (cookie, csrf) = authenticated(&app);
     let (status, _, page) = call(
@@ -1263,10 +1263,7 @@ async fn editorial_pages_tags_revision_restore_and_trash_are_durable() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        saved["metadata"]["tags"],
-        serde_json::json!(["Espírito", "Filosofia"])
-    );
+    assert_eq!(saved["metadata"]["tags"], serde_json::json!([]));
     payload["revision"] = saved["revision"].clone();
     payload["title"] = "Page two".into();
     payload["html"] = "<p>Second version</p>".into();
