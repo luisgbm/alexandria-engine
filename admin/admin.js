@@ -421,7 +421,14 @@
     return data.html;
   }
   let libraryRevision="", imageOffset=0, libraryImages=[], selectedImage=null, imageGeneration=0, searchTimer;
-  function imageCode(){return `<figure style="text-align:center;"><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
+  function imageCode(){const width=Number($("image-width").value);if(!Number.isInteger(width)||width<1||width>2400)throw new Error("Escolha uma largura inteira entre 1 e 2400 px.");return `<figure style="text-align:center;"><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}" width="${width}" style="max-width:100%;height:auto;"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
+  function refreshImageCode(){
+    let invalid=false;
+    try{$("image-code").value=imageCode();$("image-width").setCustomValidity("");}
+    catch(error){invalid=true;$("image-code").value="";$("image-width").setCustomValidity(error.message);}
+    $("copy-image-html").disabled=invalid;
+    $("insert-image").disabled=invalid||!doc||doc.trashed||$("html").readOnly||selectedImage?.deleted;
+  }
   async function loadLibrary(){
     const generation=++imageGeneration;$("image-grid").replaceChildren();$("image-count").textContent="Carregando imagens…";$("images-prev").disabled=$("images-next").disabled=true;
     const query=new URLSearchParams({q:$("image-search").value,offset:String(imageOffset),deleted:String($("image-filter").value==="deleted")});
@@ -432,9 +439,9 @@
     for(const image of data.images){const button=document.createElement("button"),img=document.createElement("img"),label=document.createElement("span");button.type="button";button.className="image-card";img.src="/api/media"+image.path;img.alt=image.alt;img.loading="lazy";label.textContent=image.name||decodeURIComponent(image.path.split("/").pop());button.append(img,label);button.onclick=()=>selectImage(image);$("image-grid").append(button);}
     return data;
   }
-  function selectImage(image){delete $("remove-image").dataset.confirmPath;$("image-notice").hidden=true;selectedImage=image;$("library-preview").src="/api/media"+image.path;$("library-preview").alt=image.alt;$("image-path").value=image.path;$("image-alt").value=image.alt;$("image-caption").value=image.caption;$("image-code").value=imageCode();$("remove-image").textContent=image.deleted ? "Restaurar na biblioteca" : "Excluir da biblioteca";$("insert-image").disabled=!doc || doc.trashed || $("html").readOnly || image.deleted;$("image-dialog").showModal();}
+  function selectImage(image){delete $("remove-image").dataset.confirmPath;$("image-notice").hidden=true;selectedImage=image;$("library-preview").src="/api/media"+image.path;$("library-preview").alt=image.alt;$("image-path").value=image.path;$("image-alt").value=image.alt;$("image-caption").value=image.caption;$("image-width").value="320";refreshImageCode();$("remove-image").textContent=image.deleted ? "Restaurar na biblioteca" : "Excluir da biblioteca";$("image-dialog").showModal();}
   $("close-image").onclick=()=>$("image-dialog").close();
-  for(const id of ["image-alt","image-caption"])$(id).oninput=()=>{$("image-code").value=imageCode();};
+  for(const id of ["image-alt","image-caption","image-width"])$(id).oninput=refreshImageCode;
   async function copyImage(value){if(!navigator.clipboard){notice("Selecione e copie o campo acima.");return;}await navigator.clipboard.writeText(value);notice("Copiado.");}
   $("copy-image-link").onclick=()=>busy($("copy-image-link"),()=>copyImage($("image-path").value));
   $("copy-image-html").onclick=()=>busy($("copy-image-html"),()=>copyImage(imageCode()));

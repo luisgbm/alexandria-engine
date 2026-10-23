@@ -207,6 +207,8 @@ pub fn sanitize(input: &str, base: &str) -> String {
                         "text-decoration" => &["none", "underline", "line-through"],
                         "white-space" => &["normal", "pre", "pre-wrap", "pre-line"],
                         "float" => &["none", "left", "right"],
+                        "max-width" if node.name.local.as_ref() == "img" => &["100%"],
+                        "height" if node.name.local.as_ref() == "img" => &["auto"],
                         _ => &[],
                     };
                     allowed
@@ -328,6 +330,20 @@ mod tests {
         assert!(
             sanitize("<span id='more-12'>Keep this text</span>", BASE).contains("Keep this text")
         );
+    }
+    #[test]
+    fn image_snippet_width_and_responsive_styles_survive_saving() {
+        let clean = sanitize(
+            r#"<figure style="text-align:center;"><img src="/uploads/a.png" width="320" style="max-width:100%;height:auto;width:99999px;background:url(javascript:evil)"><figcaption>Caption</figcaption></figure>"#,
+            BASE,
+        );
+        assert!(clean.contains("width=\"320\""));
+        assert!(clean.contains("max-width: 100%"));
+        assert!(clean.contains("height: auto"));
+        assert!(clean.contains("text-align: center"));
+        assert!(!clean.contains("99999"));
+        assert!(!clean.contains("javascript"));
+        assert_eq!(sanitize(&clean, BASE), clean);
     }
     #[test]
     fn keeps_poetry_and_captions_while_removing_active_content() {

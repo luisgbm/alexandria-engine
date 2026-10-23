@@ -361,3 +361,24 @@ Portrait verification: staging release `release-20261023T194906-8c80b3e2439a`
 passed 23,912 link checks. Browser checks confirmed a centered 240px by 312.6px
 portrait on desktop and 240px width without overflow on mobile. Private screenshot:
 `admin-validation/author-portrait-20261023.png`.
+
+## Per-insertion image width
+
+The image dialog has **Largura da imagem (px)** above **HTML para inserir**.
+Opening an image defaults to 320px. Choose an integer from 1 to 2400; invalid
+values clear the generated snippet and disable HTML copying/insertion until
+corrected. Alt-text/caption edits regenerate the snippet without resetting the
+chosen width. Copying the plain image address remains independent of sizing.
+
+Generated HTML keeps the centered figure, adds the chosen numeric `width` to the
+image and includes `style="max-width:100%;height:auto;"` so it shrinks to its
+container and preserves aspect ratio. Saving and publishing preserve those two
+specific responsive CSS values on images; arbitrary sizing/background CSS is
+still filtered. The size is per snippet, not shared library metadata, so changing
+it does not resize existing uses. Each newly opened image starts at the default.
+
+Validation: 37 Rust tests and two image-snippet JavaScript tests passed (one
+unrelated root-only test remains intentionally ignored). Tests cover default and
+custom sizes, invalid-input controls, metadata escaping and sanitizer persistence.
+The deployed staging admin serves the new control and generator. The published
+release remains `release-20261023T194906-8c80b3e2439a`; no content was published.
