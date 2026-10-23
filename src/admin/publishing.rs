@@ -112,6 +112,40 @@ fn tree_hash(root: &Path) -> Result<String> {
     visit(root, root, &mut rows)?;
     Ok(digest(&serde_json::to_string(&rows)?))
 }
+
+fn normalize_article_images(entry: &mut Entry, base: &str) -> bool {
+    if entry.metadata.kind != "post" {
+        return false;
+    }
+    let before = entry.body.clone();
+    let featured = entry.metadata.featured_image.take();
+    if let Some(src) = &featured {
+        let parsed = kuchiki::parse_html().one(html::sanitize(&entry.body, base));
+        if !parsed
+            .select("img")
+            .unwrap()
+            .any(|image| image.attributes.borrow().get("src") == Some(src.as_str()))
+        {
+            entry.body = format!(
+                "<figure style=\"text-align:center;\"><img src=\"{}\" alt=\"{}\" width=\"320\" style=\"max-width:100%;height:auto;\"><figcaption>{}</figcaption></figure>\n{}",
+                html::escape(src),
+                html::escape(entry.metadata.featured_image_alt.as_deref().unwrap_or("")),
+                html::escape(
+                    entry
+                        .metadata
+                        .featured_image_caption
+                        .as_deref()
+                        .unwrap_or("")
+                ),
+                entry.body
+            );
+        }
+        entry.metadata.featured_image_alt = None;
+        entry.metadata.featured_image_caption = None;
+    }
+    entry.body = html::apply_article_image_defaults(&entry.body, base);
+    entry.body != before || featured.is_some()
+}
 impl Publisher {
     pub(super) fn category_published(&self, slug: &str) -> Result<bool> {
         for item in fs::read_dir(self.root.join("history"))? {
@@ -224,6 +258,17 @@ impl Publisher {
         expected: &str,
         actor: &str,
     ) -> Result<String> {
+        self.deploy_transformed(source, doc, site_override, expected, actor, false)
+    }
+    fn deploy_transformed(
+        &self,
+        source: &Path,
+        doc: Option<&Document>,
+        site_override: Option<&Site>,
+        expected: &str,
+        actor: &str,
+        normalize_images: bool,
+    ) -> Result<String> {
         let _lock = self.lock()?;
         let previous = self.active()?;
         ensure!(
@@ -253,7 +298,7 @@ impl Publisher {
             // Only explicitly selected saved revision is promoted. Other drafts stay private.
             if let Some(site) = site_override {
                 write_json(&content.join("site.json"), site)?;
-            } else if source.join("editorial/site.json").exists() {
+            } else if !normalize_images && source.join("editorial/site.json").exists() {
                 fs::copy(
                     source.join("editorial/site.json"),
                     content.join("site.json"),
@@ -288,6 +333,18 @@ impl Publisher {
                     .join(&metadata.id);
                 write_json(&entry.join("metadata.json"), &metadata)?;
                 fs::write(entry.join("body.html"), &doc.html)?;
+            }
+            if normalize_images {
+                let site = read_site(&content.join("site.json"))?;
+                for mut entry in load_entries(&content)? {
+                    if entry.metadata.status == "published"
+                        && normalize_article_images(&mut entry, &site.base_url)
+                    {
+                        let folder = content.join("articles").join(&entry.metadata.id);
+                        write_json(&folder.join("metadata.json"), &entry.metadata)?;
+                        fs::write(folder.join("body.html"), &entry.body)?;
+                    }
+                }
             }
             // Refresh passive media from the immutable upload store, without importing drafts.
             let upload_pattern = regex::Regex::new(r"/uploads/[a-f0-9]{64}\.(?:png|jpg)")?;
@@ -551,6 +608,102 @@ pub fn console_rebuild(state: &Path, expected: &str) -> Result<()> {
     println!("Activated rebuilt release {active}");
     Ok(())
 }
+/// Run with the admin service stopped; public Nginx remains available throughout.
+pub fn console_normalize_article_images(
+    content: &Path,
+    state: &Path,
+    expected: &str,
+    dry_run: bool,
+) -> Result<()> {
+    console_identity(state)?;
+    let p = Publisher::open(state)?.context("publisher not configured")?;
+    ensure!(p.active()? == expected, "active release changed");
+    let snapshot = p.root.join("snapshots").join(expected);
+    let published = load_entries(&snapshot)?;
+    let site = read_site(&snapshot.join("site.json"))?;
+    let mut published_changed = 0;
+    for entry in &published {
+        if entry.metadata.status == "published"
+            && normalize_article_images(&mut entry.clone(), &site.base_url)
+        {
+            published_changed += 1;
+        }
+    }
+    let published_by_id: BTreeMap<_, _> = published
+        .iter()
+        .map(|e| (e.metadata.id.clone(), e))
+        .collect();
+    let mut store = Store::open(content.to_owned())?;
+    p.sync_store(&mut store)?;
+    let mut revisions = Vec::new();
+    for doc in store.entries.values() {
+        if doc.trashed || doc.metadata.kind != "post" {
+            continue;
+        }
+        let mut entry = if !content
+            .join("editorial")
+            .join(&doc.metadata.id)
+            .join("draft")
+            .exists()
+        {
+            published_by_id
+                .get(&doc.metadata.id)
+                .map(|e| (*e).clone())
+                .unwrap_or_else(|| Entry {
+                    metadata: doc.metadata.clone(),
+                    body: doc.html.clone(),
+                })
+        } else {
+            Entry {
+                metadata: doc.metadata.clone(),
+                body: doc.html.clone(),
+            }
+        };
+        if !normalize_article_images(&mut entry, &store.site.base_url) {
+            continue;
+        }
+        let mut next = doc.clone();
+        next.metadata = entry.metadata;
+        next.metadata.status = "draft".into();
+        next.metadata.modified_at = Some(Utc::now().to_rfc3339());
+        next.html = entry.body;
+        next.revision = Uuid::new_v4().simple().to_string();
+        revisions.push(next);
+    }
+    let editorial_changed = revisions.len();
+    if dry_run {
+        println!(
+            "{}",
+            serde_json::json!({"dry_run":true,"published_articles_changed":published_changed,"editorial_revisions_to_create":editorial_changed})
+        );
+        return Ok(());
+    }
+    let active = if published_changed > 0 {
+        p.deploy_transformed(
+            content,
+            None,
+            None,
+            expected,
+            "root-console:article-image-defaults",
+            true,
+        )?
+    } else {
+        expected.to_owned()
+    };
+    for next in revisions {
+        store.commit(next)?;
+    }
+    audit(
+        &database(state)?,
+        "article_image_defaults_applied",
+        &format!("published={published_changed};editorial={editorial_changed}"),
+    )?;
+    println!(
+        "{}",
+        serde_json::json!({"active":active,"published_articles_changed":published_changed,"editorial_revisions_created":editorial_changed})
+    );
+    Ok(())
+}
 pub fn console_rollback(state: &Path, target: &str, expected: &str) -> Result<()> {
     console_identity(state)?;
     let p = Publisher::open(state)?.context("publisher not configured")?;
@@ -725,6 +878,78 @@ pub(super) async fn rollback(
 #[cfg(test)]
 mod publishing_tests {
     use super::*;
+    #[test]
+    fn image_cleanup_deploys_only_current_public_content_and_preserves_private_settings() {
+        let (_temp, p, content, doc) = setup();
+        let source = p.root.join("snapshots/baseline");
+        fs::write(
+            source.join("articles/wp-1/body.html"),
+            "<p>Public article<img src='/image.jpg' width='640' height='480'></p>",
+        )
+        .unwrap();
+        let site = read_site(&source.join("site.json")).unwrap();
+        let mut private_site = site.clone();
+        private_site.homepage_sidebar_html = "<p>Private sidebar</p>".into();
+        write_json(&content.join("editorial/site.json"), &private_site).unwrap();
+        // A local media file makes this a real, link-validated publishing build.
+        fs::create_dir_all(source.join("media")).unwrap();
+        fs::write(source.join("media/image.jpg"), b"image fixture").unwrap();
+        let active = p
+            .deploy_transformed(&content, None, None, "baseline", "test", true)
+            .unwrap();
+        let public =
+            fs::read_to_string(p.root.join("current/artigos/original/index.html")).unwrap();
+        assert!(public.contains("width=\"320\""));
+        assert!(public.contains("Public article"));
+        assert!(!public.contains("Published selected revision"));
+        assert_eq!(
+            read_site(&p.root.join("snapshots").join(active).join("site.json"))
+                .unwrap()
+                .homepage_sidebar_html,
+            site.homepage_sidebar_html
+        );
+        let store = Store::open(content).unwrap();
+        assert_eq!(store.entries["wp-1"].revision, doc.revision);
+        assert_eq!(store.entries["wp-1"].html, doc.html);
+    }
+    #[test]
+    fn image_cleanup_migrates_legacy_features_once_and_leaves_pages_alone() {
+        let (_temp, _publisher, _content, doc) = setup();
+        let mut entry = Entry {
+            metadata: doc.metadata,
+            body: "<p>Article</p>".into(),
+        };
+        entry.metadata.featured_image = Some("/image.jpg".into());
+        entry.metadata.featured_image_alt = Some("Alt text".into());
+        entry.metadata.featured_image_caption = Some("Caption".into());
+        let page = Entry {
+            metadata: {
+                let mut m = entry.metadata.clone();
+                m.kind = "page".into();
+                m
+            },
+            body: entry.body.clone(),
+        };
+        let mut unchanged = page.clone();
+        assert!(!normalize_article_images(
+            &mut unchanged,
+            "https://www.example.com"
+        ));
+        assert_eq!(unchanged.body, page.body);
+        assert!(unchanged.metadata.featured_image.is_some());
+        assert!(normalize_article_images(
+            &mut entry,
+            "https://www.example.com"
+        ));
+        assert!(entry.metadata.featured_image.is_none());
+        assert!(entry.body.contains("Alt text"));
+        assert!(entry.body.contains("Caption"));
+        assert_eq!(entry.body.matches("<img ").count(), 1);
+        assert!(!normalize_article_images(
+            &mut entry,
+            "https://www.example.com"
+        ));
+    }
     fn setup() -> (tempfile::TempDir, Publisher, PathBuf, Document) {
         let (temp, app) = crate::admin::tests::fixture();
         let content = temp.path().join("content");

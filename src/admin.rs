@@ -37,7 +37,10 @@ mod library;
 mod permalinks;
 #[path = "admin/publishing.rs"]
 mod publishing;
-pub use publishing::{console_publish, console_rebuild, console_rollback, initialize_publishing};
+pub use publishing::{
+    console_normalize_article_images, console_publish, console_rebuild, console_rollback,
+    initialize_publishing,
+};
 
 const SESSION_COOKIE: &str = "__Host-alexandria-session";
 #[cfg(test)]
