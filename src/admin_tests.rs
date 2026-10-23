@@ -90,6 +90,101 @@ fn authenticated(app: &Shared) -> (String, String) {
 }
 
 #[tokio::test]
+async fn library_upload_order_is_persistent_precedes_pagination_and_ignores_caption_edits() {
+    let (temp, app) = fixture();
+    let root = temp.path().join("content");
+    for i in 0..50 {
+        fs::write(root.join(format!("media/uploads/a-old-{i}.png")), b"image").unwrap();
+    }
+    for name in ["zzz-first.png", "yyy-second.png"] {
+        fs::write(root.join("media/uploads").join(name), b"image").unwrap();
+        library::uploaded(&root, &format!("/uploads/{name}"), name).unwrap();
+    }
+    let (cookie, csrf) = authenticated(&app);
+    let (_, _, first) = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(first["total"], 52);
+    assert_eq!(first["images"].as_array().unwrap().len(), 48);
+    assert_eq!(first["images"][0]["path"], "/uploads/yyy-second.png");
+    assert_eq!(first["images"][1]["path"], "/uploads/zzz-first.png");
+    let timestamp = first["images"][1]["uploaded_at"].clone();
+    let edit = serde_json::json!({"path":"/uploads/zzz-first.png","revision":first["revision"],"alt":"Description","caption":"Saved caption","deleted":false});
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            Some(&csrf),
+            edit
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, _, second) = call(
+        &app,
+        "GET",
+        "/api/library?offset=48",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(second["images"].as_array().unwrap().len(), 4);
+    assert!(
+        second["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| !i["path"].as_str().unwrap().contains("first")
+                && !i["path"].as_str().unwrap().contains("second"))
+    );
+    drop(app);
+    let app = make_app(
+        root.clone(),
+        &temp.path().join("state"),
+        "http://localhost:8781".into(),
+        "localhost".into(),
+    )
+    .unwrap();
+    let (_, _, reopened) = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(reopened["images"][0]["path"], "/uploads/yyy-second.png");
+    assert_eq!(reopened["images"][1]["uploaded_at"], timestamp);
+    library::uploaded(&root, "/uploads/zzz-first.png", "zzz-first.png").unwrap();
+    let (_, _, uploaded_again) = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(uploaded_again["total"], 52);
+    assert_eq!(
+        uploaded_again["images"][0]["path"],
+        "/uploads/zzz-first.png"
+    );
+    assert_eq!(uploaded_again["images"][0]["caption"], "Saved caption");
+}
+
+#[tokio::test]
 async fn empty_trash_requires_confirmation_rejects_races_and_survives_restart() {
     let (temp, app) = fixture();
     let (cookie, csrf) = authenticated(&app);
