@@ -26,8 +26,8 @@ remain unchanged. The reference active release is
 | Live preview | Passed at desktop/narrow preview widths | Pending |
 | Publish using admin controls | Passed | User confirmed publication; feedback delay reported |
 | Generated page, image, feed, sitemap and search | Passed | 12 HTTP checks passed, including phone marker and cat JPEG/alt/caption |
-| Rollback using admin controls | Passed | Pending |
-| Exact baseline homepage restored; test paths private again | Passed | Pending |
+| Rollback using admin controls | Passed | User confirmed; screenshot shows restored baseline and success |
+| Exact baseline homepage restored; test paths private again | Passed | 10 HTTP checks passed, including exact baseline homepage hash |
 
 Desktop publication activated `staging-20261023T115545-42974eced858`. The browser
 then restored the reference release. The public image loaded with intrinsic
@@ -87,3 +87,16 @@ banner; screenshot `acceptance-status-banner.png` is stored in the private
 validation folder. The phone publication remains active; physical-phone feedback
 confirmation and rollback to the reference release are still pending. No original
 website or DNS changes were made.
+
+## Physical-phone rollback and banner width
+
+The user confirmed successful feedback and rollback on the phone, with a screenshot
+showing the reference release active. `acceptance-phone-rollback.json` records all
+10 rollback checks passing. The user also reported that the banner extended past
+the page width. The CSS now sets an explicit viewport-bounded banner width and
+allows narrow editor grids and long release/revision identifiers to shrink/wrap.
+After deployment, an authenticated browser save at phone width confirmed a visible
+success banner: viewport 394 px, document scroll width 378 px, banner bounds
+8.4–370 px (361.6 px wide). Screenshot `acceptance-phone-banner-width.png` is in
+the private validation folder. The viewport override was reset after verification.
+The saved draft remains available; the baseline staging release remains active.
