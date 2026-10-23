@@ -9,11 +9,19 @@
   let csrf = "", doc = null, entries = [], categories = [], featured = null, dirty = false, previewTimer, previewGeneration = 0, bootstrap = "";
 
   const notice = (text, error = false) => {
-    const local = $("editor-notice"), editing = !$("workspace").hidden && !$("editor").hidden;
-    $("notice").textContent = text; $("notice").classList.toggle("error", error);
-    $("notice").setAttribute("aria-live", editing ? "off" : "polite");
-    local.hidden = !editing || !text; local.textContent = editing ? text : ""; local.classList.toggle("error", error);
+    const status = $("notice");
+    status.textContent = text;
+    status.hidden = !text;
+    status.classList.toggle("error", error);
   };
+
+  // Mutation success is authoritative; a later refresh failure must not suggest
+  // that saving, publishing or rollback failed and encourage a duplicate action.
+  async function refreshAfterSuccess(message, refresh) {
+    notice(message);
+    try { await refresh(); }
+    catch (_) { notice(`${message} Não foi possível atualizar os painéis. Recarregue a página para conferir.`, true); }
+  }
 
   function loginView() { $("workspace").hidden = true; $("logout").hidden = true; $("login").hidden = false; }
 
@@ -184,7 +192,6 @@
 
   function setDocument(data) {
 
-    if(doc?.metadata.id !== data.metadata.id){$("editor-notice").hidden=true;$("editor-notice").textContent="";}
     doc=data;dirty=false;featured=data.metadata.featured_image;const m=data.metadata;$("tags").value=m.tags.join(", ");
 
     $("editor").hidden=false;$("empty").hidden=true;$("title").value=m.title;$("html").value=data.html;$("permalink").value=m.permalink||"";
@@ -227,7 +234,7 @@
 
         notice("Verificando e restaurando versão de staging…");await api("/api/rollback",{method:"POST",body:JSON.stringify({release:release.id,expected_active:deployment.active})});
 
-        await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);notice("Versão anterior restaurada no staging.");
+        await refreshAfterSuccess("Versão anterior restaurada no staging.", async()=>{await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);});
 
       });li.append(button);}$("release-list").append(li);
 
@@ -247,7 +254,7 @@
 
     await api(`/api/publish/${encodeURIComponent(doc.metadata.id)}`,{method:"POST",body:JSON.stringify({revision:doc.revision,expected_active:deployment.active})});
 
-    await loadDeployments();await refreshEntries();await selectEntry(doc.metadata.id);notice("Publicado no staging. O site original não foi alterado.");
+    await refreshAfterSuccess("Publicado no staging. O site original não foi alterado.", async()=>{await loadDeployments();await refreshEntries();await selectEntry(doc.metadata.id);});
 
   });
 
@@ -297,7 +304,7 @@
 
   function fields() {return {tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:featured,featured_image_alt:$("image-alt").value,featured_image_caption:$("image-caption").value};}
 
-  $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshEntries();notice("Rascunho salvo. O site não foi alterado.");});};
+  $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshAfterSuccess("Rascunho salvo. O site não foi alterado.",refreshEntries);});};
 
   function refreshThumb() {$("featured-thumb").hidden=!featured;if(featured)$("featured-thumb").src="/api/media"+featured;else $("featured-thumb").removeAttribute("src");}
 
