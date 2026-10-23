@@ -352,3 +352,12 @@ mobile content matched its 343.2px container without overflow. The homepage kept
 its 720px/288px columns. Build validation passed 23,912 internal-link checks and
 Nginx validation passed. Screenshot: private
 `admin-validation/standalone-page-width-20261023.png`.
+
+The existing author portrait (`wp-image-2987`) is displayed at 240px wide, with
+its original aspect ratio and responsive maximum width. Its existing centered
+alignment is preserved; other images and full-width biography text are unchanged.
+
+Portrait verification: staging release `release-20261023T194906-8c80b3e2439a`
+passed 23,912 link checks. Browser checks confirmed a centered 240px by 312.6px
+portrait on desktop and 240px width without overflow on mobile. Private screenshot:
+`admin-validation/author-portrait-20261023.png`.
