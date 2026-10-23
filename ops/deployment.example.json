@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "instance": "culture-stage",
+  "root": "/srv/alexandria-instances/culture-stage",
+  "environment": "staging",
+  "public_url": "https://stage.example.org",
+  "canonical_url": "https://www.example.org",
+  "admin_origin": "https://admin-stage.example.org",
+  "public_bind": "0.0.0.0:443",
+  "admin_bind": "0.0.0.0:443",
+  "http_bind": "0.0.0.0:80",
+  "backend_bind": "127.0.0.1:3001",
+  "public_certificate": "/etc/letsencrypt/live/stage.example.org/fullchain.pem",
+  "public_key": "/etc/letsencrypt/live/stage.example.org/privkey.pem",
+  "admin_certificate": "/etc/letsencrypt/live/admin-stage.example.org/fullchain.pem",
+  "admin_key": "/etc/letsencrypt/live/admin-stage.example.org/privkey.pem",
+  "backup_extra_paths": ["/etc/letsencrypt"],
+  "backup_calendar": "*-*-01 05:00:00 UTC",
+  "backup_keep_monthly": 12,
+  "health_interval": "5min"
+}
