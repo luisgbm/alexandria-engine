@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 BASE = 'http://52.153.234.132'
 ARTICLE = '/artigos/aceitacao-desktop-celular-20261023/'
 IMAGE = '/uploads/1a92e094ee5515ae7dd7d958e6340d50b2ae532b444553a3f0219dc702ad1b30.png'
+PHONE_IMAGE = '/uploads/4375270f8633b79f46dca7ca0d005c57856ae14515142f68d8970cf6e7ce743b.jpg'
 BASELINE_HOME = '2e17ef437c763fc1cae20fcc913944fac74109ccf67f2b52cefb5f4d1eab33ff'
 
 
@@ -45,6 +46,8 @@ def main():
             assert fragment in text, fragment
         if args.phone_marker:
             assert 'Validado no celular' in text
+            assert PHONE_IMAGE in text and 'Gato — celular.' in text and 'alt="Gato"' in text
+            assert get(PHONE_IMAGE).startswith(b'\xff\xd8\xff')
         assert get(IMAGE).startswith(b'\x89PNG\r\n\x1a\n')
     for path in ['/feed/', '/wp-sitemap.xml']:
         body = get(path)

@@ -4,7 +4,7 @@
 
 <body><header class="top"><div><span class="eyebrow">Cultura Espiritual</span><h1>Administração</h1></div><span class="badge">Ambiente de testes</span><button id="logout" class="quiet" hidden>Sair</button></header>
 
-<p id="notice" role="status" aria-live="polite"></p>
+<p id="notice" role="status" aria-live="polite" aria-atomic="true" hidden></p>
 
 <section id="login" class="login panel"><span class="eyebrow">Seu arquivo, com segurança</span><h2>Entre com sua passkey</h2><p>Use o desbloqueio do seu dispositivo ou uma chave de segurança. Nenhuma senha é necessária.</p><button id="signin">Entrar com passkey</button><div id="setup" hidden><hr><h3>Primeiro acesso</h3><p>Abra o link de cadastro fornecido pelo operador. A chave inicial é temporária e funciona uma única vez.</p><label>Chave inicial<input id="bootstrap" type="password" autocomplete="off" spellcheck="false"></label><label>Nome do dispositivo<input id="first-key-name" maxlength="100" value="Meu dispositivo"></label><button id="enroll">Cadastrar minha primeira passkey</button></div><p class="muted">As passkeys pertencem ao endereço deste administrador. As passkeys de produção serão cadastradas no endereço definitivo.</p></section>
 
@@ -18,7 +18,7 @@
 
 <main class="panel editor"><div id="empty"><span class="eyebrow">Seu espaço editorial</span><h2>Escolha um artigo para começar</h2><p>Edite o texto, envie imagens e acompanhe a prévia. Salvar mantém as alterações em um rascunho privado.</p></div>
 
-<form id="editor" hidden><div class="section-top"><div><span id="entry-state" class="eyebrow"></span><h2>Editar conteúdo</h2></div><button id="publish" type="button" class="secondary" hidden>Publicar no staging</button><button id="save" type="submit">Salvar rascunho</button></div><p id="editor-notice" class="editor-notice" role="status" aria-live="polite" hidden></p><p class="muted">Salvar não publica e não altera o site de testes. O histórico de versões é mantido.</p>
+<form id="editor" hidden><div class="section-top"><div><span id="entry-state" class="eyebrow"></span><h2>Editar conteúdo</h2></div><button id="publish" type="button" class="secondary" hidden>Publicar no staging</button><button id="save" type="submit">Salvar rascunho</button></div><p class="muted">Salvar não publica e não altera o site de testes. O histórico de versões é mantido.</p>
 
 <label>Título<input id="title" required maxlength="300"></label><div class="fields"><label>Endereço permanente<input id="permalink" spellcheck="false" placeholder="/artigos/titulo/"></label><label>Data original · horário de Brasília<input id="published-local" type="datetime-local" step="1" required></label></div><p id="path-hint" class="muted"></p>
 
@@ -30,7 +30,7 @@
 <div class="section-top"><label for="html">Texto em HTML</label><span id="dirty" class="muted"></span></div><textarea id="html" spellcheck="false" rows="20" aria-describedby="html-help"></textarea><p id="html-help" class="muted">Preserve parágrafos, títulos e quebras de versos. Conteúdo inseguro é removido ao salvar e visualizar.</p>
 
 <section><h3>Histórico editorial</h3><p>Consultar uma versão não altera o texto. Restaurar cria um novo rascunho privado.</p><ul id="revision-list"></ul><button id="trash-entry" type="button" class="secondary">Mover para lixeira</button><p id="trash-hint" class="muted"></p></section>
-<section id="deployments" hidden><h3>Publicações de staging</h3><p id="active-release" class="muted"></p><a id="view-staging" target="_blank" rel="noopener noreferrer">Abrir site de testes</a><p>Restaurar uma versão altera somente o staging. Os rascunhos são mantidos.</p><ul id="release-list"></ul><p id="deployment-result" role="status"></p></section>
+<section id="deployments" hidden><h3>Publicações de staging</h3><p id="active-release" class="muted"></p><a id="view-staging" target="_blank" rel="noopener noreferrer">Abrir site de testes</a><p>Restaurar uma versão altera somente o staging. Os rascunhos são mantidos.</p><ul id="release-list"></ul><p id="deployment-result" class="muted"></p></section>
 
 <section class="preview-section"><div class="section-top"><h3>Prévia ao vivo</h3><div class="preview-controls"><button type="button" id="wide" class="quiet" aria-pressed="true">Desktop</button><button type="button" id="narrow" class="quiet" aria-pressed="false">Celular</button><button type="button" id="refresh-preview" class="secondary">Atualizar</button></div></div><p id="preview-status" class="muted" role="status"></p><iframe id="preview" title="Prévia isolada do artigo" sandbox="" referrerpolicy="no-referrer"></iframe></section>
 

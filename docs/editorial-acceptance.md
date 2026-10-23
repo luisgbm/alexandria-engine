@@ -24,8 +24,8 @@ remain unchanged. The reference active release is
 | Article editing and saved persistence | Passed, including reload | Saved phone marker verified on server and after desktop reload |
 | Image upload, alt text and caption | Passed | Phone JPEG, alt text and caption verified in saved draft |
 | Live preview | Passed at desktop/narrow preview widths | Pending |
-| Publish using admin controls | Passed | Pending |
-| Generated page, image, feed, sitemap and search | Passed | Pending |
+| Publish using admin controls | Passed | User confirmed publication; feedback delay reported |
+| Generated page, image, feed, sitemap and search | Passed | 12 HTTP checks passed, including phone marker and cat JPEG/alt/caption |
 | Rollback using admin controls | Passed | Pending |
 | Exact baseline homepage restored; test paths private again | Passed | Pending |
 
@@ -72,11 +72,18 @@ saved revision already contained the phone marker, the new JPEG, alt text and
 caption; repeated taps had created valid revisions. The original success/error
 notice was above the analytics dashboard and outside the mobile editor viewport.
 
-The admin now repeats action feedback directly below the editor buttons, with
-an accessible live status and an error style. The save button shows **Salvando…**
-during the request. Only the editor status announces messages while the editor
-is open, avoiding duplicate live announcements. Selecting a different document
-clears its previous local notice. A browser save verified the new visible success
-message and preserved all phone changes. The user must refresh the phone admin
-to load this update; the reference release is still active. Phone confirmation
-of the updated feedback, publishing and rollback remains pending.
+The first fix repeated feedback beside the editor buttons. The user then published
+from the phone, activating `staging-20261023T120915-494b837b0fae`, but reported a
+several-second difference between messages. The follow-up fix replaces duplicated
+messages with one persistent bottom status banner, including atomic live
+announcements. Save, publish and rollback show success immediately after the
+mutation API confirms completion, before refreshing the deployment/list/document
+panels. A panel refresh failure retains the completed-operation message and asks
+for a reload rather than implying the mutation failed.
+
+The deployed admin was reloaded in the authenticated browser. Saving the unchanged
+phone draft showed **Salvando rascunho…**, followed by the visible fixed success
+banner; screenshot `acceptance-status-banner.png` is stored in the private
+validation folder. The phone publication remains active; physical-phone feedback
+confirmation and rollback to the reference release are still pending. No original
+website or DNS changes were made.

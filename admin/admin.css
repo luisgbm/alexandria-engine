@@ -2,4 +2,7 @@
 
 .analytics-totals{display:flex;flex-wrap:wrap;gap:2rem;margin:1.3rem 0}.analytics-totals>div{display:grid;gap:.3rem}.analytics-totals strong{font-size:2.2rem;color:#285e49}.analytics-totals span{font-size:.9rem}.analytics-chart{display:flex;align-items:flex-end;gap:5px;overflow-x:auto;min-height:150px;padding:.5rem 0}.analytics-column{min-width:30px;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px;height:145px}.analytics-bar{width:100%;max-width:36px;background:#477c60;border-radius:4px 4px 0 0}.analytics-column span{font-size:.65rem;white-space:nowrap}.analytics-table{overflow-x:auto}.analytics-table table{width:100%;border-collapse:collapse}.analytics-table th,.analytics-table td{text-align:left;padding:.7rem;border-bottom:1px solid #ddd}.analytics-table th{font-size:.85rem}
 
-.editor-notice{margin:.6rem 0;padding:.7rem .9rem;border:1px solid #afc9b5;border-radius:7px;background:#edf5ee;color:#214c32;font-size:.95rem}.editor-notice.error{border-color:#d9a5a5;background:#fff0ee;color:#8a2020}
+/* One persistent action status, visible even when the editor is far down the page. */
+body{padding-bottom:7rem}
+#notice{position:fixed;z-index:100;bottom:max(1rem,env(safe-area-inset-bottom));left:3vw;right:3vw;max-width:56rem;margin:0 auto;padding:.8rem 1rem;border:1px solid #afc9b5;border-radius:8px;background:#edf5ee;color:#214c32;box-shadow:0 3px 16px #15251d30;font-size:.95rem;max-height:30vh;overflow:auto}
+#notice.error{border-color:#d9a5a5;background:#fff0ee;color:#8a2020}
