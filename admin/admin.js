@@ -421,7 +421,7 @@
     return data.html;
   }
   let libraryRevision="", imageOffset=0, libraryImages=[], selectedImage=null, imageGeneration=0, searchTimer;
-  function imageCode(){return `<figure><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
+  function imageCode(){return `<figure style="text-align:center;"><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
   async function loadLibrary(){
     const generation=++imageGeneration;$("image-grid").replaceChildren();$("image-count").textContent="Carregando imagens…";$("images-prev").disabled=$("images-next").disabled=true;
     const query=new URLSearchParams({q:$("image-search").value,offset:String(imageOffset),deleted:String($("image-filter").value==="deleted")});

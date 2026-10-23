@@ -11,6 +11,11 @@ use std::{
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use url::Url;
 
+const RETIRED_FEEDS: [&str; 3] = ["/feed/", "/feed/index.xml", "/rss.xml"];
+fn retired_feed(path: &str) -> bool {
+    RETIRED_FEEDS.contains(&path.split('?').next().unwrap_or(path))
+}
+
 pub fn normalize(s: &str) -> String {
     s.to_lowercase()
         .nfd()
@@ -74,7 +79,7 @@ fn template(site: &Site, path: &str, title: &str, body: &str, description: &str)
     let nav = site
         .navigation
         .iter()
-        .filter(|n| n.path != "/search/")
+        .filter(|n| n.path != "/search/" && !retired_feed(&n.path))
         .map(|n| format!("<a href=\"{}\">{}</a>", e(&n.path), e(&n.title)))
         .collect::<Vec<_>>()
         .join(" ");
@@ -100,7 +105,7 @@ fn template(site: &Site, path: &str, title: &str, body: &str, description: &str)
         brand
     };
     format!(
-        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{document_title}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css\"><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS\" href=\"/feed/\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><div class=\"site-top\">{brand}<form id=\"search-form\" role=\"search\" aria-label=\"Pesquisar no arquivo\" action=\"/\" method=\"get\"><label class=\"sr\" for=\"query\">Pesquisar no arquivo</label><input id=\"query\" name=\"q\" type=\"search\" placeholder=\"Pesquisar no arquivo…\" required><button type=\"submit\">Pesquisar</button></form></div>{banner}<nav aria-label=\"Principal\">{nav}</nav><noscript><p>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</p></noscript></header><main id=\"conteudo\"><section id=\"search-panel\" aria-labelledby=\"search-heading\" hidden><div class=\"search-toolbar\"><h2 id=\"search-heading\">Resultados da pesquisa</h2><button id=\"close-search\" type=\"button\">Fechar pesquisa</button></div><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol></section><div id=\"page-content\">{body}</div></main><footer><a href=\"/feed/\">RSS</a> · {}</footer><script src=\"/assets/search.js\" defer></script></body></html>\n",
+        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{document_title}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><div class=\"site-top\">{brand}<form id=\"search-form\" role=\"search\" aria-label=\"Pesquisar no arquivo\" action=\"/\" method=\"get\"><label class=\"sr\" for=\"query\">Pesquisar no arquivo</label><input id=\"query\" name=\"q\" type=\"search\" placeholder=\"Pesquisar no arquivo…\" required><button type=\"submit\">Pesquisar</button></form></div>{banner}<nav aria-label=\"Principal\">{nav}</nav><noscript><p>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</p></noscript></header><main id=\"conteudo\"><section id=\"search-panel\" aria-labelledby=\"search-heading\" hidden><div class=\"search-toolbar\"><h2 id=\"search-heading\">Resultados da pesquisa</h2><button id=\"close-search\" type=\"button\">Fechar pesquisa</button></div><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol></section><div id=\"page-content\">{body}</div></main><footer>{}</footer><script src=\"/assets/search.js\" defer></script></body></html>\n",
         e(description),
         e(&site.base_url),
         e(path),
@@ -370,11 +375,18 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
                 )
             })
             .unwrap_or_default();
+        let date = if m.kind == "post" {
+            format!(
+                "<p class=\"date\"><time datetime=\"{}\">{}</time></p>",
+                html::escape(m.published_at.as_deref().unwrap()),
+                display_date(m)
+            )
+        } else {
+            String::new()
+        };
         let page = format!(
-            "<article><h1>{}</h1><p class=\"date\"><time datetime=\"{}\">{}</time></p><div class=\"entry-content\">{featured}{b}</div></article>",
-            html::escape(&m.title),
-            html::escape(m.published_at.as_deref().unwrap()),
-            display_date(m)
+            "<article><h1>{}</h1>{date}<div class=\"entry-content\">{featured}{b}</div></article>",
+            html::escape(&m.title)
         );
         writer.page(
             path,
@@ -476,23 +488,6 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
         )?;
     }
     search(&mut writer, &site, &articles)?;
-    let mut rss =
-        String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><rss version=\"2.0\"><channel>");
-    rss.push_str(&format!(
-        "<title>{}</title><link>{}/</link><description>{}</description><language>pt-BR</language>",
-        html::escape(&site.title),
-        html::escape(&site.base_url),
-        html::escape(&site.title)
-    ));
-    for e in articles.iter().take(site.page_size) {
-        let m = &e.metadata;
-        let url = format!("{}{}", site.base_url, m.permalink.as_deref().unwrap());
-        let date = DateTime::parse_from_rfc3339(m.published_at.as_deref().unwrap())?.to_rfc2822();
-        rss.push_str(&format!("<item><title>{}</title><link>{}</link><guid isPermaLink=\"true\">{}</guid><pubDate>{date}</pubDate><description>{}</description></item>",html::escape(&m.title),html::escape(&url),html::escape(&url),html::escape(&html::text(&e.body).chars().take(500).collect::<String>())));
-    }
-    rss.push_str("</channel></rss>\n");
-    writer.file("/feed/index.xml", &rss)?;
-    writer.file("/rss.xml", &rss)?;
     writer.file(
         "/robots.txt",
         format!(
@@ -696,12 +691,10 @@ struct Report {
     checked_internal_links: usize,
     preexisting_missing: Vec<String>,
     unexplained_missing: Vec<String>,
+    retired_paths: Vec<String>,
 }
 fn exists(root: &Path, path: &str, redirects: &BTreeMap<String, String>) -> Result<bool> {
     let target = redirects.get(path).map(String::as_str).unwrap_or(path);
-    if target == "/feed/" {
-        return Ok(root.join("feed/index.xml").is_file());
-    }
     let path = target.split('?').next().unwrap();
     let rel = relative_path(path)?;
     Ok(root.join(&rel).is_file()
@@ -718,6 +711,7 @@ fn validate(
         schema_version: SCHEMA_VERSION,
         files: writer.files.len(),
         html_pages: writer.pages.len(),
+        retired_paths: RETIRED_FEEDS.map(String::from).to_vec(),
         ..Default::default()
     };
     let known = site
@@ -739,7 +733,9 @@ fn validate(
         Ok(())
     };
     for path in &site.observed_paths {
-        check(path)?;
+        if !retired_feed(path) {
+            check(path)?;
+        }
     }
     for target in redirects.values() {
         check(target)?;
@@ -794,7 +790,7 @@ fn validate(
     // Every verified successful baseline must resolve; known 404s remain documented.
     let baseline: Vec<UrlCheck> = read_json(&content.join("url-baseline.json"))?;
     for record in baseline {
-        if record.expected == "200" {
+        if record.expected == "200" && !retired_feed(&record.path) {
             check(&record.path)?;
         }
     }

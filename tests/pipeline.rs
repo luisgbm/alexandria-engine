@@ -133,6 +133,15 @@ fn imports_and_builds_portable_deterministic_site_without_draft_or_secret_leaks(
     assert!(!site.contains("NEVER EXPORT HASH"));
     let mut site: Site = read_site(&content.join("site.json")).unwrap();
     site.expected_missing.push("/?attachment_id=999".into());
+    site.observed_paths.push("/feed/".into());
+    let mut baseline: Vec<UrlCheck> = read_json(&content.join("url-baseline.json")).unwrap();
+    baseline.push(UrlCheck {
+        path: "/feed/".into(),
+        source: "historic RSS URL".into(),
+        expected: "200".into(),
+    });
+    write_json(&content.join("url-baseline.json"), &baseline).unwrap();
+
     write_json(&content.join("site.json"), &site).unwrap();
     let a = root.join("release-a");
     let b = root.join("release-b");
@@ -153,7 +162,24 @@ fn imports_and_builds_portable_deterministic_site_without_draft_or_secret_leaks(
     assert!(!page.contains("evil()"));
     let config = fs::read_to_string(a.join("ops/server.inc.conf")).unwrap();
     assert!(config.contains("if ($alexandria_known_missing) { return 404; }"));
+    // Compatibility locations are inert without generated feed files, and allow
+    // normal deployment/rollback without changing root-owned routing maps.
     assert!(config.contains("types {} default_type application/rss+xml"));
+    assert!(!a.join("public/feed/index.xml").exists());
+    assert!(!a.join("public/rss.xml").exists());
+    let home = fs::read_to_string(a.join("public/index.html")).unwrap();
+    assert!(!home.contains("application/rss+xml"));
+    assert!(!home.contains("href=\"/feed/\""));
+    let report: serde_json::Value = read_json(&a.join("build-report.json")).unwrap();
+    assert!(
+        report["retired_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "/feed/")
+    );
+    assert!(report["unexplained_missing"].as_array().unwrap().is_empty());
+
     let map = fs::read_to_string(a.join("ops/redirects.map.conf")).unwrap();
     assert!(map.contains("\"/?attachment_id=999\" 1;"));
     let docs = fs::read_to_string(a.join("public/search/documents.json")).unwrap();
@@ -327,6 +353,14 @@ fn regenerates_category_lists_and_rejects_invalid_metadata_schema() {
     assert!(markup.contains("href=\"/artigos/oracao/\">Oração</a>"));
     assert!(!markup.contains("SECRET DRAFT"));
     assert!(!markup.contains("data-list-index"));
+    use kuchiki::traits::TendrilSink;
+    let parsed = kuchiki::parse_html().one(markup);
+    assert_eq!(parsed.select("article > p.date").unwrap().count(), 0);
+    assert!(parsed.select(".entry-content time").unwrap().count() > 0); // Dates inside generated lists stay.
+    let article = kuchiki::parse_html()
+        .one(fs::read_to_string(release.join("public/artigos/oracao/index.html")).unwrap());
+    assert_eq!(article.select("article > p.date time").unwrap().count(), 1);
+
     let mut invalid: serde_json::Value = read_json(&folder.join("metadata.json")).unwrap();
     invalid["status"] = "typo".into();
     write_json(&folder.join("metadata.json"), &invalid).unwrap();
