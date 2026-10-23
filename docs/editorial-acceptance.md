@@ -21,8 +21,8 @@ remain unchanged. The reference active release is
 | Check | Desktop browser | Physical phone |
 |---|---|---|
 | Authenticated admin access | Passed | Phone passkey login previously confirmed |
-| Article editing and saved persistence | Passed, including reload | Pending |
-| Image upload, alt text and caption | Passed | Pending |
+| Article editing and saved persistence | Passed, including reload | Saved phone marker verified on server and after desktop reload |
+| Image upload, alt text and caption | Passed | Phone JPEG, alt text and caption verified in saved draft |
 | Live preview | Passed at desktop/narrow preview widths | Pending |
 | Publish using admin controls | Passed | Pending |
 | Generated page, image, feed, sitemap and search | Passed | Pending |
@@ -64,3 +64,19 @@ Private JSON reports and screenshots are in
    draft remains editable; the operator verifies rollback with the same script.
 6. Record physical-device/browser observations and any failures explicitly. Do
    not infer phone acceptance from desktop emulation or server-side checks.
+
+## Phone save feedback finding
+
+The user reported that tapping **Salvar rascunho** appeared to do nothing. The
+saved revision already contained the phone marker, the new JPEG, alt text and
+caption; repeated taps had created valid revisions. The original success/error
+notice was above the analytics dashboard and outside the mobile editor viewport.
+
+The admin now repeats action feedback directly below the editor buttons, with
+an accessible live status and an error style. The save button shows **Salvando…**
+during the request. Only the editor status announces messages while the editor
+is open, avoiding duplicate live announcements. Selecting a different document
+clears its previous local notice. A browser save verified the new visible success
+message and preserved all phone changes. The user must refresh the phone admin
+to load this update; the reference release is still active. Phone confirmation
+of the updated feedback, publishing and rollback remains pending.

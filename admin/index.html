@@ -18,7 +18,7 @@
 
 <main class="panel editor"><div id="empty"><span class="eyebrow">Seu espaço editorial</span><h2>Escolha um artigo para começar</h2><p>Edite o texto, envie imagens e acompanhe a prévia. Salvar mantém as alterações em um rascunho privado.</p></div>
 
-<form id="editor" hidden><div class="section-top"><div><span id="entry-state" class="eyebrow"></span><h2>Editar conteúdo</h2></div><button id="publish" type="button" class="secondary" hidden>Publicar no staging</button><button id="save" type="submit">Salvar rascunho</button></div><p class="muted">Salvar não publica e não altera o site de testes. O histórico de versões é mantido.</p>
+<form id="editor" hidden><div class="section-top"><div><span id="entry-state" class="eyebrow"></span><h2>Editar conteúdo</h2></div><button id="publish" type="button" class="secondary" hidden>Publicar no staging</button><button id="save" type="submit">Salvar rascunho</button></div><p id="editor-notice" class="editor-notice" role="status" aria-live="polite" hidden></p><p class="muted">Salvar não publica e não altera o site de testes. O histórico de versões é mantido.</p>
 
 <label>Título<input id="title" required maxlength="300"></label><div class="fields"><label>Endereço permanente<input id="permalink" spellcheck="false" placeholder="/artigos/titulo/"></label><label>Data original · horário de Brasília<input id="published-local" type="datetime-local" step="1" required></label></div><p id="path-hint" class="muted"></p>
 
