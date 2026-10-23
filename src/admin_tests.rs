@@ -90,6 +90,175 @@ fn authenticated(app: &Shared) -> (String, String) {
 }
 
 #[tokio::test]
+async fn empty_trash_requires_confirmation_rejects_races_and_survives_restart() {
+    let (temp, app) = fixture();
+    let (cookie, csrf) = authenticated(&app);
+    let (_, _, original) = call(
+        &app,
+        "GET",
+        "/api/articles/wp-1",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let (_, _, trashed) = call(
+        &app,
+        "POST",
+        "/api/articles/wp-1/trash",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"revision":original["revision"],"trashed":true}),
+    )
+    .await;
+    let (_, _, summary) = call(
+        &app,
+        "GET",
+        "/api/trash",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(summary["items"].as_array().unwrap().len(), 1);
+    let mut payload =
+        serde_json::json!({"revision":summary["revision"],"confirmation":"ESVAZIAR LIXEIRA"});
+    assert_eq!(
+        call(&app, "POST", "/api/trash", None, None, payload.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/trash",
+            Some(&cookie),
+            None,
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    payload["confirmation"] = serde_json::json!("yes");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/trash",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    payload["confirmation"] = serde_json::json!("ESVAZIAR LIXEIRA");
+    let (_, _, restored) = call(
+        &app,
+        "POST",
+        "/api/articles/wp-1/trash",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"revision":trashed["revision"],"trashed":false}),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/trash",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/articles/wp-1/trash",
+            Some(&cookie),
+            Some(&csrf),
+            serde_json::json!({"revision":restored["revision"],"trashed":true})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, _, summary) = call(
+        &app,
+        "GET",
+        "/api/trash",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    payload["revision"] = summary["revision"].clone();
+    // Another active draft must not be removed.
+    let (_, _, survivor) = call(
+        &app,
+        "POST",
+        "/api/articles",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({}),
+    )
+    .await;
+    fs::write(
+        temp.path().join("content/media/uploads/shared.png"),
+        b"image",
+    )
+    .unwrap();
+    let (status, _, result) = call(
+        &app,
+        "POST",
+        "/api/trash",
+        Some(&cookie),
+        Some(&csrf),
+        payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["deleted"], 1);
+    assert_eq!(result["cleanup_pending"], 0);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/articles/wp-1",
+            Some(&cookie),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!temp.path().join("content/editorial/wp-1").exists());
+    assert!(temp.path().join("content/articles/wp-1/body.html").exists());
+    assert!(
+        temp.path()
+            .join("content/media/uploads/shared.png")
+            .exists()
+    );
+    let reopened = Store::open(temp.path().join("content")).unwrap();
+    assert!(!reopened.entries.contains_key("wp-1"));
+    assert!(
+        reopened
+            .entries
+            .contains_key(survivor["metadata"]["id"].as_str().unwrap())
+    );
+}
+
+#[tokio::test]
 async fn image_library_is_private_versioned_and_preserves_existing_urls() {
     let (temp, app) = fixture();
     let image = "/uploads/library.png";

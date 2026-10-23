@@ -255,6 +255,7 @@ struct Store {
 
 impl Store {
     fn open(root: PathBuf) -> Result<Self> {
+        let purged = editorial::purged_ids(&root)?;
         let catalog = root.join("editorial/site.json");
         let site = read_site(&if catalog.exists() {
             catalog
@@ -263,6 +264,9 @@ impl Store {
         })?;
         let mut entries = BTreeMap::new();
         for entry in load_entries(&root)? {
+            if purged.contains(&entry.metadata.id) {
+                continue;
+            }
             let serialized = serde_json::to_string(&entry.metadata)?;
             let revision = digest(&format!("{serialized}\0{}", entry.body));
             entries.insert(
@@ -289,6 +293,9 @@ impl Store {
                 .and_then(|s| s.to_str())
                 .context("invalid editorial entry ID")?;
             validate_id(id)?;
+            if purged.contains(id) {
+                continue;
+            }
             let pointer = dir.join("draft");
             if !pointer.is_file() {
                 continue;
@@ -701,6 +708,10 @@ fn router(app: Shared) -> Router {
         .route("/api/logout", post(logout))
         .route("/api/credentials", get(credentials))
         .route("/api/articles", get(list_entries).post(create_entry))
+        .route(
+            "/api/trash",
+            get(editorial::trash_summary).post(editorial::empty_trash),
+        )
         .route("/api/articles/{id}", get(get_entry).put(save_entry))
         .route("/api/articles/{id}/revisions", get(editorial::revisions))
         .route(

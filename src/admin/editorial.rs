@@ -1,5 +1,103 @@
 //! Recoverable editorial changes, revision browsing and category management.
 use super::*;
+use std::collections::BTreeSet;
+
+pub(super) fn purged_ids(root: &Path) -> Result<BTreeSet<String>> {
+    let path = root.join("editorial/purged.json");
+    let ids: BTreeSet<String> = if path.exists() {
+        read_json(&path)?
+    } else {
+        BTreeSet::new()
+    };
+    for id in &ids {
+        validate_id(id)?;
+    }
+    Ok(ids)
+}
+
+fn trash_revision(store: &Store) -> Result<String> {
+    let rows: BTreeMap<_, _> = store
+        .entries
+        .iter()
+        .filter(|(_, d)| d.trashed)
+        .map(|(id, d)| (id, &d.revision))
+        .collect();
+    Ok(digest(&serde_json::to_string(&rows)?))
+}
+
+pub(super) async fn trash_summary(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, false)?;
+    let store = app.store.lock().unwrap();
+    let items: Vec<_> = store
+        .entries
+        .values()
+        .filter(|d| d.trashed)
+        .map(|d| serde_json::json!({"id":d.metadata.id,"title":d.metadata.title}))
+        .collect();
+    Ok(Json(
+        serde_json::json!({"revision":trash_revision(&store)?,"items":items}),
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct EmptyTrash {
+    revision: String,
+    confirmation: String,
+}
+
+pub(super) async fn empty_trash(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<EmptyTrash>,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, true)?;
+    if input.confirmation != "ESVAZIAR LIXEIRA" {
+        return Err(bad("Digite ESVAZIAR LIXEIRA para confirmar."));
+    }
+    let mut store = app.store.lock().unwrap();
+    if trash_revision(&store)? != input.revision {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "A lixeira mudou. Confira os itens antes de confirmar novamente.".into(),
+        ));
+    }
+    let ids: Vec<_> = store
+        .entries
+        .iter()
+        .filter(|(_, d)| d.trashed)
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut purged = purged_ids(&store.root)?;
+    purged.extend(ids.iter().cloned());
+    // Commit the logical deletion first. A restart cannot resurrect imported
+    // source entries or an editorial directory left by interrupted cleanup.
+    audit(
+        &app.db.lock().unwrap(),
+        "trash_purge_requested",
+        &ids.join(","),
+    )?;
+    publishing::durable_json(&store.root.join("editorial/purged.json"), &purged)?;
+    for id in &ids {
+        store.entries.remove(id);
+    }
+    let mut cleanup_pending = 0;
+    for id in &ids {
+        let directory = store.root.join("editorial").join(id);
+        if directory.exists() && (directory.is_symlink() || fs::remove_dir_all(&directory).is_err())
+        {
+            cleanup_pending += 1;
+        }
+    }
+    if audit(&app.db.lock().unwrap(), "trash_emptied", &ids.join(",")).is_err() {
+        eprintln!("trash deletion committed; completion audit needs review");
+    }
+    Ok(Json(
+        serde_json::json!({"deleted":ids.len(),"cleanup_pending":cleanup_pending}),
+    ))
+}
 
 pub(super) fn validate_tags(tags: Vec<String>) -> ApiResult<Vec<String>> {
     if tags.len() > 30
