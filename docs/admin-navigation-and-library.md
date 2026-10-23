@@ -246,3 +246,34 @@ ten recent links with dates, and no horizontal overflow. Private screenshots:
 folder. Isolated tests cover cursor insertion, sidebar sanitization and auth/CSRF,
 revision conflicts, article/sidebar draft isolation, sidebar-only image uploads,
 failed-release preservation, generator-only rebuilding and rollback.
+
+## Header search and homepage title
+
+Public pages have a search box beside the site title in the header; on narrow
+screens it stacks below the title. Submitting shows results inline, replacing
+the current page content until **Fechar pesquisa** (or clearing the search box)
+restores it. No search navigation item or separate search screen is needed.
+The index is fetched only on the first query, with the existing accent-insensitive
+ranking and highlighted matches. A query updates `?q=` on the current URL,
+preserving other query parameters and fragments.
+
+Old `/search/?q=...` links still work: their compatibility document is the homepage
+with the same inline search, and the client rewrites its address to `/?q=...`.
+The old path is omitted from the sitemap. Root homepage/archive pages keep one
+site heading in the header and omit the repeated archive heading. The homepage
+browser title also contains the site name once. Article titles remain intact.
+
+Regression checks: `cargo test` verifies generated pages, titles, one search form,
+legacy URLs, sitemap/build validation and existing article/sidebar behavior;
+`node --test tests/site-search.test.cjs` verifies inline results, lazy loading,
+accent handling, URL preservation, close/clear behavior and stale request handling.
+
+Staging release `release-20261023T191044-e92a29fe33da` passed 25,004 internal-link
+checks across 1,095 pages, with no missing paths, and Nginx validation passed.
+Published snapshot and private editorial files were unchanged. Browser checks at
+1280px and 390px confirmed a single site heading, desktop search to its right,
+mobile stacking without overflow, inline results and successful close/restore.
+The query `ontologias transformadoras` returned the expected article on desktop,
+mobile and the legacy search URL. Screenshots are stored privately under
+`admin-validation/header-search-{desktop,mobile,results}-20261023.png` in the
+operator backup folder.

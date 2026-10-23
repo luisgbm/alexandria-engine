@@ -227,6 +227,35 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
     assert!(release.join("public/page/2/index.html").exists());
     use kuchiki::traits::TendrilSink;
     let parsed = kuchiki::parse_html().one(home.clone());
+    assert_eq!(parsed.select("header h1.site-heading").unwrap().count(), 1);
+    assert_eq!(parsed.select(".home-main > h1").unwrap().count(), 0);
+    assert_eq!(
+        parsed.select_first("title").unwrap().text_contents(),
+        site.title
+    );
+    assert_eq!(
+        parsed
+            .select("header #search-form input[type=search]")
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(parsed.select("nav a[href='/search/']").unwrap().count(), 0);
+    assert_eq!(parsed.select("#search-panel[hidden]").unwrap().count(), 1);
+    assert_eq!(
+        fs::read_to_string(release.join("public/search/index.html")).unwrap(),
+        home
+    );
+    let article = kuchiki::parse_html()
+        .one(fs::read_to_string(release.join("public/preview-11/index.html")).unwrap());
+    assert_eq!(article.select("header #search-form").unwrap().count(), 1);
+    assert_eq!(
+        article
+            .select_first("#page-content h1")
+            .unwrap()
+            .text_contents(),
+        "Preview 11"
+    );
     let aside = parsed.select_first("aside.home-sidebar").unwrap();
     assert!(
         aside
