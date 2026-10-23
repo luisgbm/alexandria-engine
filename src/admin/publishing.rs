@@ -28,7 +28,7 @@ struct Event {
     result: String,
     detail: String,
 }
-struct Lock(fs::File);
+pub(super) struct Lock(fs::File);
 impl Drop for Lock {
     fn drop(&mut self) {
         unsafe {
@@ -188,7 +188,7 @@ impl Publisher {
         publisher.active()?;
         Ok(Some(publisher))
     }
-    fn lock(&self) -> Result<Lock> {
+    pub(super) fn lock(&self) -> Result<Lock> {
         let f = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -201,6 +201,17 @@ impl Publisher {
             "another deployment is running"
         );
         Ok(Lock(f))
+    }
+    pub(super) fn retained_media(&self, path: &str) -> Result<bool> {
+        let relative = relative_path(path)?;
+        for (folder, prefix) in [("snapshots", "media"), ("releases", "public")] {
+            for entry in fs::read_dir(self.root.join(folder))? {
+                if entry?.path().join(prefix).join(&relative).exists() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
     fn active(&self) -> Result<String> {
         let target = fs::canonicalize(self.root.join("current"))?;
@@ -886,6 +897,16 @@ pub(super) async fn rollback(
 #[cfg(test)]
 mod publishing_tests {
     use super::*;
+    #[test]
+    fn retained_release_media_is_protected_even_without_an_article_reference() {
+        let (_temp, p, _content, _doc) = setup();
+        assert!(!p.retained_media("/uploads/unused.png").unwrap());
+        let media = p.root.join("releases/baseline/public/uploads");
+        fs::create_dir_all(&media).unwrap();
+        fs::write(media.join("unused.png"), b"image").unwrap();
+        assert!(p.retained_media("/uploads/unused.png").unwrap());
+        assert!(p.retained_media("/../secret.png").is_err());
+    }
     #[test]
     fn image_cleanup_deploys_only_current_public_content_and_preserves_private_settings() {
         let (_temp, p, content, doc) = setup();

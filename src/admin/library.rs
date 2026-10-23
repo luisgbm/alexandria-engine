@@ -1,4 +1,4 @@
-//! Private image catalog. Removal never breaks published URLs or historic revisions.
+//! Private image catalog. Referenced and retained media cannot be permanently deleted.
 use super::*;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -238,6 +238,132 @@ pub(super) async fn update(
     )?;
     Ok(Json(
         serde_json::json!({"revision":revision(&data)?,"saved":true}),
+    ))
+}
+
+fn referenced(root: &Path, path: &str) -> Result<bool> {
+    fn visit(dir: &Path, path: &str) -> Result<bool> {
+        if !dir.exists() {
+            return Ok(false);
+        }
+        for item in fs::read_dir(dir)? {
+            let item = item?;
+            let kind = item.file_type()?;
+            ensure!(!kind.is_symlink(), "unexpected editorial symlink");
+            if kind.is_dir() {
+                if visit(&item.path(), path)? {
+                    return Ok(true);
+                }
+            } else if kind.is_file() {
+                let file = item.path();
+                let name = item.file_name();
+                if file.extension().and_then(|s| s.to_str()) == Some("html")
+                    || name == "metadata.json"
+                    || name == "site.json"
+                {
+                    let text = fs::read_to_string(file)?.replace("\\/", "/");
+                    if percent_encoding::percent_decode_str(&text)
+                        .decode_utf8_lossy()
+                        .contains(path)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+    for folder in ["articles", "pages", "editorial"] {
+        if visit(&root.join(folder), path)? {
+            return Ok(true);
+        }
+    }
+    for name in ["site.json", "attachments.json", "url-baseline.json"] {
+        let file = root.join(name);
+        if file.exists()
+            && percent_encoding::percent_decode_str(&fs::read_to_string(file)?.replace("\\/", "/"))
+                .decode_utf8_lossy()
+                .contains(path)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+#[derive(Deserialize)]
+pub(super) struct Purge {
+    path: String,
+    revision: String,
+    confirmation: String,
+}
+pub(super) async fn purge(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<Purge>,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, true)?;
+    if input.confirmation != "EXCLUIR IMAGEM" {
+        return Err(bad("Digite EXCLUIR IMAGEM para confirmar."));
+    }
+    // Serialize against publication/rollback as well as editor saves and uploads.
+    let _publish_lock = app
+        .publisher
+        .as_ref()
+        .map(|p| p.lock())
+        .transpose()
+        .map_err(|_| {
+            ApiError(
+                StatusCode::CONFLICT,
+                "Aguarde a publicação terminar e tente novamente.".into(),
+            )
+        })?;
+    let store = app.store.lock().unwrap();
+    let mut data = catalog(&store.root)?;
+    if revision(&data)? != input.revision {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "A biblioteca mudou. Atualize antes de continuar.".into(),
+        ));
+    }
+    if !data.get(&input.path).is_some_and(|image| image.deleted) {
+        return Err(bad(
+            "Remova a imagem da biblioteca antes de excluí-la definitivamente.",
+        ));
+    }
+    // Imported sources remain immutable and are present in historical public releases.
+    if !input.path.starts_with("/uploads/") {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "Imagem protegida: fontes importadas do WordPress são preservadas.".into(),
+        ));
+    }
+    let file = media_file(&store.root, &input.path).map_err(|_| bad("Imagem não encontrada."))?;
+    let relative = relative_path(&input.path)?;
+    let media = fs::canonicalize(store.root.join("media")).map_err(anyhow::Error::from)?;
+    if file != media.join(&relative) {
+        return Err(bad("Caminho de imagem inválido."));
+    }
+    let decoded = percent_encoding::percent_decode_str(&input.path).decode_utf8_lossy();
+    if referenced(&store.root, &decoded)?
+        || app
+            .publisher
+            .as_ref()
+            .map(|p| p.retained_media(&input.path))
+            .transpose()?
+            .unwrap_or(false)
+    {
+        return Err(ApiError(StatusCode::CONFLICT,"Imagem em uso ou preservada em conteúdo, versões anteriores ou publicações. A exclusão definitiva foi bloqueada.".into()));
+    }
+    fs::remove_file(&file).map_err(anyhow::Error::from)?;
+    data.remove(&input.path);
+    // The file deletion is authoritative. A metadata/audit refresh failure must
+    // not report deletion failure and encourage a second destructive attempt.
+    let cleanup_pending = save(&store.root, &data).is_err();
+    if let Err(error) = audit(&app.db.lock().unwrap(), "library_image_purged", &input.path) {
+        eprintln!("image purge audit failed: {error:#}");
+    }
+    Ok(Json(
+        serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending}),
     ))
 }
 

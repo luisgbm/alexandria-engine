@@ -747,6 +747,7 @@ fn router(app: Shared) -> Router {
         )
         .route("/api/homepage/publish", post(publishing::publish_homepage))
         .route("/api/library", get(library::list).put(library::update))
+        .route("/api/library/purge", post(library::purge))
         .route("/api/media/{*path}", get(media))
         .route("/api/analytics", get(analytics_report))
         .route("/api/deployments", get(publishing::history))
