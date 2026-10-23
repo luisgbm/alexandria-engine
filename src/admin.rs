@@ -37,7 +37,7 @@ mod library;
 mod permalinks;
 #[path = "admin/publishing.rs"]
 mod publishing;
-pub use publishing::{console_publish, console_rollback, initialize_publishing};
+pub use publishing::{console_publish, console_rebuild, console_rollback, initialize_publishing};
 
 const SESSION_COOKIE: &str = "__Host-alexandria-session";
 #[cfg(test)]
@@ -690,6 +690,10 @@ fn router(app: Shared) -> Router {
             get(|| async { Html(include_str!("../admin/index.html")) }),
         )
         .route(
+            "/appearance/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
+        .route(
             "/categories/",
             get(|| async { Html(include_str!("../admin/index.html")) }),
         )
@@ -733,6 +737,11 @@ fn router(app: Shared) -> Router {
         )
         .route("/api/categories/order", post(editorial::order_categories))
         .route("/api/uploads", post(upload))
+        .route(
+            "/api/homepage",
+            get(editorial::homepage).put(editorial::save_homepage),
+        )
+        .route("/api/homepage/publish", post(publishing::publish_homepage))
         .route("/api/library", get(library::list).put(library::update))
         .route("/api/media/{*path}", get(media))
         .route("/api/analytics", get(analytics_report))

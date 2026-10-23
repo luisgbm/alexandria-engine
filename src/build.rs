@@ -245,6 +245,11 @@ fn archive(
             ));
         }
         body.push_str("</nav>");
+        if root == "/" {
+            body = format!("<div class=\"home-layout\"><section class=\"home-main\">{body}</section><aside class=\"home-sidebar\" aria-label=\"Barra lateral\"><div class=\"sidebar-content\">{}</div><section aria-labelledby=\"recent-articles-title\"><h2 id=\"recent-articles-title\">Artigos recentes</h2>{}</section></aside></div>",
+                html::sanitize(&site.homepage_sidebar_html, &site.base_url),
+                item_list(&entries[..entries.len().min(10)], true));
+        }
         writer.page(
             &path,
             &template(site, &path, title, &body, "Arquivo de artigos"),

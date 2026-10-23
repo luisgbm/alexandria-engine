@@ -4,6 +4,7 @@
 
   const $ = id => document.getElementById(id);
 
+  let sidebarRevision="", sidebarDirty=false;
   let deployment = null, catalogRevision = "", selectedRevision = null;
 
   let environment = "staging", environmentLabel = "Ambiente de testes";
@@ -128,17 +129,18 @@
 
   $("logout").onclick = () => busy($("logout"), async () => {
 
-    if (dirty && !confirm("Há alterações não salvas. Deseja sair mesmo assim?")) return;
+    if ((dirty||sidebarDirty) && !confirm("Há alterações não salvas. Deseja sair mesmo assim?")) return;
 
     await api("/api/logout",{method:"POST",body:"{}"}); csrf="";doc=null;dirty=false;$("editor").hidden=true;$("empty").hidden=false;$("preview").srcdoc="";loginView();notice("Sessão encerrada.");
 
   });
 
-  const pages = {"/":"statistics","/content/":"content","/images/":"images","/categories/":"categories","/publications/":"publications","/security/":"security"};
+  const pages = {"/":"statistics","/content/":"content","/images/":"images","/appearance/":"appearance","/categories/":"categories","/publications/":"publications","/security/":"security"};
   function identity(data) {
     environment = data.environment; environmentLabel = data.environment_label;
     $("environment-badge").textContent = environmentLabel;
     $("publish").textContent = environment === "production" ? "Publicar" : "Publicar no staging";
+    $("publish-sidebar").textContent = environment === "production" ? "Publicar barra lateral" : "Publicar barra lateral no staging";
   }
   async function showPage(path, push = false) {
     const name = pages[path] || "statistics";
@@ -151,6 +153,7 @@
     if(name==="categories")await loadCategories();
     if(name==="publications")await loadDeployments();
     if(name==="images")await loadLibrary();
+    if(name==="appearance"){await loadDeployments();if(!sidebarDirty)await loadHomepage();}
     if(name==="security"){
       const keys=await api("/api/credentials");$("key-list").replaceChildren();
       $("key-count").textContent=`${keys.credentials.length} passkey(s) cadastrada(s)`;
@@ -232,6 +235,7 @@
 
     for(const field of $("editor").querySelectorAll("input,textarea,select"))field.disabled=data.trashed;
 
+    $("insert-more").disabled=data.trashed||generated;
     $("trash-entry").textContent=data.trashed ? "Restaurar da lixeira" : "Mover para lixeira";
     $("trash-hint").textContent=data.trashed ? "Este conteúdo está na lixeira editorial. Uma versão já publicada continua disponível." : "Mover para a lixeira não apaga versões, imagens nem páginas publicadas.";
     $("dirty").textContent="";renderEntries();schedulePreview();loadRevisions(data.metadata.id).catch(e=>notice(e.message,true));
@@ -347,6 +351,32 @@
   }
   $("create-category").onclick=()=>busy($("create-category"),async()=>{await api("/api/categories",{method:"POST",body:JSON.stringify({revision:catalogRevision,name:$("category-name").value,slug:$("category-slug").value})});$("category-name").value="";$("category-slug").value="";await loadCategories();if(doc&&!dirty)setDocument(await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`));notice("Categoria criada.");});
 
+  $("insert-more").onclick=()=>{
+    if(!doc||doc.trashed||$("html").readOnly)return;
+    const field=$("html");field.setRangeText("<!--more-->",field.selectionStart,field.selectionEnd,"end");field.focus();edit();
+    notice("Corte da prévia inserido. Salve o rascunho para manter a alteração.");
+  };
+  async function loadHomepage(){
+    $("sidebar-html").disabled=true;$("save-sidebar").disabled=true;
+    try{const data=await api("/api/homepage");sidebarRevision=data.revision;$("sidebar-html").value=data.html;sidebarDirty=false;$("sidebar-state").textContent="Rascunho salvo. Os artigos recentes são gerados automaticamente.";}
+    finally{$("sidebar-html").disabled=false;$("save-sidebar").disabled=false;}
+    $("publish-sidebar").hidden=!deployment?.enabled;$("view-homepage").hidden=!deployment?.enabled;
+    if(deployment?.enabled)$("view-homepage").href=deployment.public_url+"/";
+  }
+  $("sidebar-html").addEventListener("input",()=>{sidebarDirty=true;$("sidebar-state").textContent="Alterações não salvas";});
+  $("sidebar-form").onsubmit=event=>{event.preventDefault();busy($("save-sidebar"),async()=>{
+    $("sidebar-html").disabled=true;
+    try{const data=await api("/api/homepage",{method:"PUT",body:JSON.stringify({revision:sidebarRevision,html:$("sidebar-html").value})});sidebarRevision=data.revision;$("sidebar-html").value=data.html;sidebarDirty=false;$("sidebar-state").textContent="Barra lateral salva como rascunho. Publique para atualizar a página inicial.";notice("Barra lateral salva. O site não foi alterado.");}
+    finally{$("sidebar-html").disabled=false;}
+  });};
+  $("publish-sidebar").onclick=()=>busy($("publish-sidebar"),async()=>{
+    if(sidebarDirty)throw new Error("Salve o rascunho da barra lateral antes de publicar.");
+    notice("Publicando barra lateral…");
+    await api("/api/homepage/publish",{method:"POST",body:JSON.stringify({revision:sidebarRevision,expected_active:deployment.active})});
+    $("sidebar-state").textContent="Barra lateral publicada. Confira a página inicial.";
+    await refreshAfterSuccess("Barra lateral publicada. Rascunhos de artigos foram preservados.",loadDeployments);
+  });
+
   function edit() {if(!doc)return;dirty=true;$("dirty").textContent="Alterações não salvas";schedulePreview();}
 
   for(const id of ["title","html","permalink","published-local","categories","tags"])$(id).addEventListener("input",edit);
@@ -427,7 +457,7 @@
 
   $("narrow").onclick=()=>{$("preview").classList.add("phone");$("narrow").setAttribute("aria-pressed","true");$("wide").setAttribute("aria-pressed","false");};
 
-  window.addEventListener("beforeunload",event=>{if(dirty){event.preventDefault();event.returnValue="";}});
+  window.addEventListener("beforeunload",event=>{if(dirty||sidebarDirty){event.preventDefault();event.returnValue="";}});
 
   (async()=>{const fragment=new URLSearchParams(location.hash.slice(1));bootstrap=fragment.get("setup")||"";if(location.hash)history.replaceState(null,"",location.pathname);const status=await api("/api/status");identity(status);$("setup").hidden=status.initialized;$("signin").hidden=!status.initialized;if(bootstrap)$("bootstrap").value=bootstrap;try{await openApp();}catch(_){loginView();if(!status.initialized)notice("Cadastre sua primeira passkey para abrir o ambiente editorial.");else notice("");}})().catch(error=>notice(error.message,true));
 

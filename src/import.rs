@@ -640,6 +640,7 @@ fn import_into(archive: &Path, rendered: &Path, inventory: &Path, output: &Path)
         expected_missing: missing.into_iter().collect(),
         observed_paths: observed.into_iter().collect(),
         banner,
+        homepage_sidebar_html: String::new(),
     };
     write_json(&output.join("site.json"), &site)?;
     write_json(&output.join("attachments.json"), &attachments)?;

@@ -64,6 +64,14 @@ enum Command {
         expected_active: String,
     },
     #[cfg(unix)]
+    /// Rebuild the active published snapshot without promoting private drafts.
+    Rebuild {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+    },
+    #[cfg(unix)]
     /// Activate an existing verified release from the root console.
     #[command(name = "rollback", alias = "rollback-staging")]
     RollbackStaging {
@@ -150,6 +158,11 @@ fn main() -> Result<()> {
             &revision,
             &expected_active,
         )?,
+        #[cfg(unix)]
+        Command::Rebuild {
+            state,
+            expected_active,
+        } => alexandria_engine::admin::console_rebuild(&state, &expected_active)?,
         #[cfg(unix)]
         Command::RollbackStaging {
             state,

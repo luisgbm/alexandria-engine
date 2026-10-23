@@ -61,6 +61,8 @@ pub struct Site {
     pub expected_missing: Vec<String>,
     pub observed_paths: Vec<String>,
     pub banner: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub homepage_sidebar_html: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
