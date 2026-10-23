@@ -277,3 +277,32 @@ The query `ontologias transformadoras` returned the expected article on desktop,
 mobile and the legacy search URL. Screenshots are stored privately under
 `admin-validation/header-search-{desktop,mobile,results}-20261023.png` in the
 operator backup folder.
+
+## Image alignment, page dates and RSS retirement
+
+New image-library snippets (**HTML para inserir**, copying HTML and inserting into
+an article) start with `<figure style="text-align:center;">`. Escaping of image
+addresses, alternative text and captions is preserved. Existing article markup
+is not rewritten. Sanitization keeps the supported centering style.
+
+Public content with kind `page` no longer displays the publication-date block
+below its heading. Article dates, dates within generated article lists, and
+private/imported publication metadata remain intact.
+
+At the owner's request RSS is retired: the footer link and alternate-feed tag
+are removed, and `/feed/`, `/feed/index.xml` and `/rss.xml` no longer have generated
+feed files. These paths return 404. Build reports list them under `retired_paths`;
+only their historical observed/baseline requirements are exempted. New internal
+links to absent feeds still fail validation. Existing root-owned Nginx feed
+locations remain inert compatibility stubs, so the release can deploy/roll back
+without a routing-map change. Original attachment pages/media such as
+`/feed-icon-14x14/` are preserved. This preference supersedes earlier RSS checks
+in the production-readiness history and initial specification.
+
+Staging release `release-20261023T192320-842554e1d4c1` passed 22,822 internal-link
+checks across 1,095 pages with no unexplained missing paths. HTTP checks verified
+all three retired feed URLs return 404, regular pages and articles still return
+200, and the live admin serves the centered snippet. Published snapshot/private
+editorial hashes were unchanged. Nginx validation passed. The staging HTTP
+validator reads `retired_paths` from the build report, while retaining its former
+RSS checks when validating an older release without retired feed paths.

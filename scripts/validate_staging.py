@@ -34,6 +34,7 @@ def main():
     if stage.hostname in (production.hostname, production.hostname.removeprefix('www.')):
         parser.error('refusing to run against the production website')
     public = args.release / 'public'
+    retired = set(json.loads((args.release / 'build-report.json').read_text(encoding='utf-8')).get('retired_paths', []))
     redirect_text = (args.release / 'ops' / 'redirects.map.conf').read_text(encoding='utf-8')
     redirects = dict(re.findall(r'^\s+"([^"]+)" "([^"]+)";', redirect_text, re.M))
     known_missing = set(site['expected_missing'])
@@ -41,6 +42,8 @@ def main():
     excluded = []
 
     def add(path, status, source, size=None):
+        if path.split('?', 1)[0] in retired:
+            status, size = 404, None
         previous = checks.get(path)
         item = {'path': path, 'expected_status': status, 'sources': set(), 'size': size}
         if previous:
@@ -67,6 +70,8 @@ def main():
     for path in redirects:
         add(path, 301, 'redirect_map')
     add('/feed/', 200, 'rss_endpoint')
+    for path in retired:
+        add(path, 404, 'retired_feature')
     for path in known_missing:
         add(path, 404, 'preexisting_missing')
 
@@ -169,6 +174,12 @@ def main():
         return headers, body
 
     def feed():
+        if '/feed/' in retired:
+            for path in sorted(retired):
+                status, _, _ = request(path, 'GET')
+                if status != 404:
+                    raise ValueError(f'{path}: retired endpoint should return 404, got {status}')
+            return {'retired_paths': sorted(retired), 'status': 404}
         headers, body = get('/feed/')
         if headers.get('Content-Type', '').split(';')[0] != 'application/rss+xml':
             raise ValueError('RSS endpoint should use application/rss+xml: ' + headers.get('Content-Type', ''))
@@ -209,7 +220,7 @@ def main():
             raise ValueError(f'GET body differs from generated file: {path}')
         return {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
 
-    detail('RSS feed', feed)
+    detail('RSS endpoint policy', feed)
     detail('Sitemap publication coverage', sitemap)
     for path, relative in [('/', 'index.html'), ('/poesias/prece/', 'poesias/prece/index.html'),
                            ('/livros/', 'livros/index.html'), ('/artigos/', 'artigos/index.html'),
