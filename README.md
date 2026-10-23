@@ -136,6 +136,7 @@ does not prove that every URL ever published has been discovered.
 - [Editorial workflow: pages, categories, tags, history and trash](docs/editorial-workflow.md)
 - [Admin staging and enrollment](docs/admin-staging.md)
 - [Dependency license inventory](docs/dependency-licenses.md)
+- [Encrypted backups and restore](docs/backup-restore.md)
 
 The engine's original source code is MIT licensed. Site articles, images,
 backups, and private configuration retain their own copyrights and permissions.
