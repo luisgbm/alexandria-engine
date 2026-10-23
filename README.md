@@ -135,6 +135,7 @@ does not prove that every URL ever published has been discovered.
 - [Private staging validation results](docs/staging-validation.md)
 - [Editorial workflow: pages, categories, tags, history and trash](docs/editorial-workflow.md)
 - [Admin staging and enrollment](docs/admin-staging.md)
+- [Lost-key recovery drill](docs/admin-recovery-drill.md)
 - [Dependency license inventory](docs/dependency-licenses.md)
 - [Encrypted backups and restore](docs/backup-restore.md)
 

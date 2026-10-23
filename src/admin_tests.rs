@@ -544,6 +544,227 @@ async fn webauthn_rejects_mismatched_origin_and_expired_bootstrap() {
 }
 
 #[tokio::test]
+#[ignore = "requires root; disposable recovery fixture only"]
+async fn offline_recovery_revokes_old_access_and_enrolls_replacement() {
+    assert_eq!(unsafe { libc::geteuid() }, 0);
+    let (temp, app) = fixture();
+    let origin = url::Url::parse("http://localhost:8781").unwrap();
+    let mut old_key = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let (_, headers, flow) = call(
+        &app,
+        "POST",
+        "/api/auth/register/start",
+        None,
+        None,
+        serde_json::json!({"bootstrap":"a".repeat(64)}),
+    )
+    .await;
+    let cookie = session_cookie(&headers, FLOW_COOKIE);
+    let credential = old_key
+        .do_registration(
+            origin.clone(),
+            serde_json::from_value(flow["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let (status, headers, _) = call(
+        &app,
+        "POST",
+        "/api/auth/register/finish",
+        Some(&cookie),
+        None,
+        serde_json::json!({"id":flow["id"],"credential":credential,"name":"Disposable old key"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let old_session = session_cookie(&headers, SESSION_COOKIE);
+    let (_, headers, pending) = call(
+        &app,
+        "POST",
+        "/api/auth/login/start",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let old_flow_cookie = session_cookie(&headers, FLOW_COOKIE);
+    let old_assertion = old_key
+        .do_authentication(
+            origin.clone(),
+            serde_json::from_value(pending["options"].clone()).unwrap(),
+        )
+        .unwrap();
+
+    let secret = temp.path().join("offline-secret");
+    fs::write(&secret, "offline-test-secret").unwrap();
+    let state = temp.path().join("state");
+    let outputs = temp.path().join("rotated-secrets");
+    recover(&state, &secret, &outputs).unwrap();
+    drop(app); // Recovery requires a restart: discard all in-memory challenges.
+    let app = make_app(
+        temp.path().join("content"),
+        &state,
+        "http://localhost:8781".into(),
+        "localhost".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/articles",
+            Some(&old_session),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/login/finish",
+            Some(&old_flow_cookie),
+            None,
+            serde_json::json!({"id":pending["id"],"credential":old_assertion})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(recover(&state, &secret, &temp.path().join("replay")).is_err());
+    let bootstrap = fs::read_to_string(outputs.join("bootstrap-token.txt")).unwrap();
+    app.db
+        .lock()
+        .unwrap()
+        .execute("UPDATE bootstrap SET expires_at=0", [])
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/register/start",
+            None,
+            None,
+            serde_json::json!({"bootstrap":bootstrap})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    app.db
+        .lock()
+        .unwrap()
+        .execute("UPDATE bootstrap SET expires_at=?1", [now() + 600])
+        .unwrap();
+
+    let mut replacement = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let (status, headers, flow) = call(
+        &app,
+        "POST",
+        "/api/auth/register/start",
+        None,
+        None,
+        serde_json::json!({"bootstrap":bootstrap}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = session_cookie(&headers, FLOW_COOKIE);
+    let credential = replacement
+        .do_registration(
+            origin.clone(),
+            serde_json::from_value(flow["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let finish = serde_json::json!({"id":flow["id"],"credential":credential,"name":"Disposable replacement"});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/register/finish",
+            Some(&cookie),
+            None,
+            finish.clone()
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/register/finish",
+            Some(&cookie),
+            None,
+            finish
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.db
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM bootstrap", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+
+    let (_, headers, flow) = call(
+        &app,
+        "POST",
+        "/api/auth/login/start",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let cookie = session_cookie(&headers, FLOW_COOKIE);
+    assert!(
+        old_key
+            .do_authentication(
+                origin.clone(),
+                serde_json::from_value(flow["options"].clone()).unwrap()
+            )
+            .is_err()
+    );
+    let credential = replacement
+        .do_authentication(
+            origin,
+            serde_json::from_value(flow["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let (status, headers, _) = call(
+        &app,
+        "POST",
+        "/api/auth/login/finish",
+        Some(&cookie),
+        None,
+        serde_json::json!({"id":flow["id"],"credential":credential}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session = session_cookie(&headers, SESSION_COOKIE);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/articles",
+            Some(&session),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
 async fn editorial_pages_tags_revision_restore_and_trash_are_durable() {
     let (_temp, app) = fixture();
     let (cookie, csrf) = authenticated(&app);

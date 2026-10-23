@@ -95,6 +95,9 @@ secrets. `scripts/export-admin-enrollment.ps1` performs the initial Windows priv
 export and verifies DPAPI round-trip before removing the server plaintext recovery
 copy. It refuses to overwrite existing local exports.
 
+See the [completed lost-key recovery drill](admin-recovery-drill.md) for safe
+rehearsal instructions, validation results and the limits of the DPAPI export.
+
 ## Protections and validation
 
 WebAuthn challenges remain server-side, expire, and are consumed once. User
