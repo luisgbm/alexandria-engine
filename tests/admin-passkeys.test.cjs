@@ -12,7 +12,7 @@ function ui(initial) {
     api:async(path,options)=>{calls.push({path,options});if(options){if(failure)throw Error(failure);keys=keys.filter(k=>!path.includes(k.id));return {ok:true};}return {credentials:keys};},
     refreshAfterSuccess:async(text,refresh)=>{message=text;await refresh();}
   });
-  vm.runInContext(source.slice(source.indexOf('  let keyToRemove ='),source.indexOf('  document.addEventListener("click",event=>')),context);
+  vm.runInContext(source.slice(source.indexOf('  let keyToRemove ='),source.indexOf('  document.addEventListener("click",event=>',source.indexOf('  let keyToRemove ='))),context);
   return {nodes,calls,load:()=>vm.runInContext('loadPasskeys()',context),fail:text=>failure=text,submit:()=>get('remove-key-form').onsubmit({preventDefault(){}}),message:()=>message};
 }
 const key=(id,name)=>({id,name,created_at:1700000000});

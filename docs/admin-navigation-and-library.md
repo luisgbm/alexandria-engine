@@ -39,8 +39,9 @@ The generated HTML escapes metadata; normal HTML sanitization still applies.
 
 **Excluir da biblioteca**, followed by the inline confirmation, removes an image from normal browsing. Select
 **Removidas da biblioteca** to restore it. Image bytes remain available for
-existing URLs, saved drafts and revision history. This is recoverable removal,
-not permanent file purging; there is no permanent purge control.
+existing URLs, saved drafts and revision history. This is recoverable removal.
+Removed, unused native uploads can subsequently be permanently deleted with
+the separate confirmation described below.
 
 Metadata is private JSON under `content/editorial/library.json`, with prior
 catalogs under `content/editorial/library-history`. Optimistic revision checks
@@ -513,3 +514,68 @@ Both genuine credential records were verified byte-for-byte unchanged. The
 public release is still `release-20261023T202054-317f91629ea4` and returns 200.
 Private pre-deployment binary/state backup:
 `/root/alexandria-before-passkey-removal-20261023T202925Z`.
+
+
+## Admin layout and publishing feedback
+
+The admin navigation uses the public site's pale green background, dark green
+active item, hover treatment and rounded links. At 640px and below it collapses
+behind a top-left hamburger button. Selection, Escape, outside clicks and desktop
+breakpoint changes close it. The appearance link is named **Barra lateral**.
+Initial statistics period is seven days at mobile widths and thirty days on
+desktop. Resizing or switching pages does not reset a manual period selection.
+
+Article publication, sidebar publication and rollback display a centered native
+modal with a dimmed, inert background. An indeterminate progress bar runs until
+the request resolves. Reduced-motion mode uses a gentle opacity pulse instead
+of a sweeping bar. Escape cannot dismiss the pending operation; completion or
+failure closes it in `finally`. Success/errors can then use normal notices.
+
+Panel titles align with the same top padding: browser checks measured 23.2px on
+desktop for Estatísticas, Biblioteca de imagens and Seu espaço editorial, and
+16.8px on mobile. The editor's previous four-rem empty-state gap was removed.
+
+## Permanent deletion of removed images
+
+Open **Imagens**, select **Removidas da biblioteca**, open an image and choose
+**Excluir definitivamente**. The separate dialog requires typing **EXCLUIR
+IMAGEM** and confirming. Cancellation leaves it unchanged. This is server-side
+file deletion, not another recoverable library removal; the library cannot
+restore it. Existing backups are unaffected. No real images were purged while
+validating this feature.
+
+Only unused native uploads under `/uploads/` may be purged. Original WordPress
+media are immutable migration sources and remain protected. The server also
+blocks current content, historical editor revisions (including trashed content),
+sidebar settings, attachment/URL baselines and media present in any retained
+public release or snapshot. A historical release may still serve a direct image
+URL even when no current article uses it, so its file is protected. Emptying a
+private test draft's trash can release its revision references if it was never
+published. A referenced image can still be removed from normal library browsing.
+
+`POST /api/library/purge` requires a session, CSRF/Origin checks, current catalog
+revision, a removed catalog entry, the exact confirmation, a canonical passive
+image path, and an available publication lock. It serializes against editor and
+library writes and rejects publication races. It never edits retained releases,
+import sources, backups, credentials, or Nginx configuration. It audits the purge.
+Deletion is authoritative; a later catalog-history write problem is returned as
+`cleanup_pending` rather than pretending the deletion failed.
+
+Validation: 45 Rust tests and 15 JavaScript tests passed; one unrelated root-only
+recovery test remains intentionally ignored. Purge tests use ephemeral files and
+cover authentication, CSRF, confirmation, active-vs-removed state, stale catalog
+revisions, draft/history/sidebar/import protection, actual unused-file deletion
+and retention of release media. Browser layout/progress checks used isolated
+local test data and mock API responses, with no staging publications or real
+image deletions. Modal center was (640,450) at 1280x900; animation was infinite
+and the dialog closed after completion. Mobile had no horizontal overflow.
+Private screenshots: `admin-validation/admin-progress-modal-20261023.png` and
+`admin-validation/admin-mobile-statistics-20261023.png`.
+
+
+Staging deployment confirmed: admin HTML/JS/CSS serve the new modal, mobile
+navigation, period defaults and purge controls. An unauthenticated purge returns
+401. The public site returns 200 and its release remains
+`release-20261023T202054-317f91629ea4`. Both credential records, the library
+catalog and all 1,550 source media files were verified unchanged. Private backup:
+`/root/alexandria-before-admin-layout-20261023T204814Z`.

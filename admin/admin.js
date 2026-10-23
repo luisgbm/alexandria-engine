@@ -33,7 +33,7 @@
     catch (_) { notice(`${message} Não foi possível atualizar os painéis. Recarregue a página para conferir.`, true); }
   }
 
-  function loginView() { $("workspace").hidden = true; $("logout").hidden = true; $("login").hidden = false; }
+  function loginView() { setAdminMenu(false);$("admin-menu-toggle").hidden=true; $("workspace").hidden = true; $("logout").hidden = true; $("login").hidden = false; }
 
   async function api(path, options = {}) {
 
@@ -56,6 +56,23 @@
   }
 
   function busy(button, action) { const label = button.textContent; button.disabled = true; if(button.id === "save")button.textContent = "Salvando…"; return Promise.resolve().then(action).catch(error => notice(error.name === "NotAllowedError" ? "Operação cancelada ou passkey indisponível. Você pode tentar novamente." : error.message, true)).finally(() => { button.disabled = false; if(button.id === "save")button.textContent = label; }); }
+
+  async function withPublishProgress(message, action) {
+    const modal=$("publish-progress");if(modal.open)throw new Error("Já existe uma operação em andamento.");
+    clearTimeout(noticeTimer);$("notice").hidden=true;$("publish-progress-message").textContent=message;modal.showModal();
+    try { return await action(); } finally { modal.close(); }
+  }
+  $("publish-progress").addEventListener("cancel",event=>event.preventDefault());
+  function setAdminMenu(open) {
+    $("admin-navigation").classList.toggle("is-open",open);
+    $("admin-menu-toggle").setAttribute("aria-expanded",String(open));
+    $("admin-menu-toggle").setAttribute("aria-label",open ? "Fechar menu" : "Abrir menu");
+  }
+  $("admin-menu-toggle").onclick=()=>setAdminMenu($("admin-menu-toggle").getAttribute("aria-expanded")!=="true");
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"){setAdminMenu(false);}});
+  document.addEventListener("click",event=>{if(!event.target.closest("#admin-navigation,#admin-menu-toggle"))setAdminMenu(false);});
+  window.matchMedia("(min-width: 40.001rem)").addEventListener("change",()=>setAdminMenu(false));
+  $("analytics-period").value=window.matchMedia("(max-width: 40rem)").matches ? "week" : "month";
 
   function decode(value) { const raw = atob(value.replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(raw, c => c.charCodeAt(0)); }
 
@@ -143,7 +160,7 @@
     $("publish-sidebar").textContent = environment === "production" ? "Publicar barra lateral" : "Publicar barra lateral no staging";
   }
   async function showPage(path, push = false) {
-    const name = pages[path] || "statistics";
+    const name = pages[path] || "statistics";setAdminMenu(false);
     if(push) history.pushState(null,"",path);
     for(const panel of document.querySelectorAll("[data-page]")) panel.hidden=panel.dataset.page!==name;
     for(const link of document.querySelectorAll(".admin-nav a")) {if(link.pathname===path)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");}
@@ -188,7 +205,7 @@
   window.addEventListener("popstate",()=>{if(csrf)showPage(location.pathname).catch(e=>notice(e.message,true));});
   async function openApp() {
     const session = await api("/api/session"); csrf=session.csrf;categories=session.site.categories;identity(session);
-    $("login").hidden=true;$("workspace").hidden=false;$("logout").hidden=false;
+    $("login").hidden=true;$("workspace").hidden=false;$("admin-menu-toggle").hidden=false;$("logout").hidden=false;
     await showPage(location.pathname);
   }
 
@@ -285,7 +302,7 @@
 
         if(!confirm(`Restaurar ${release.id} em ${environmentLabel}? Os rascunhos serão mantidos.`))return;
 
-        notice(`Verificando e restaurando versão em ${environmentLabel}…`);await api("/api/rollback",{method:"POST",body:JSON.stringify({release:release.id,expected_active:deployment.active})});
+        await withPublishProgress(`Verificando e restaurando versão em ${environmentLabel}…`,()=>api("/api/rollback",{method:"POST",body:JSON.stringify({release:release.id,expected_active:deployment.active})}));
 
         await refreshAfterSuccess(`Versão anterior restaurada em ${environmentLabel}.`, async()=>{await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);});
 
@@ -303,9 +320,7 @@
 
     if(!confirm(`Publicar “${doc.metadata.title}” em ${environmentLabel}?`))return;
 
-    notice("Gerando e validando o site. A versão atual permanece disponível…");
-
-    await api(`/api/publish/${encodeURIComponent(doc.metadata.id)}`,{method:"POST",body:JSON.stringify({revision:doc.revision,expected_active:deployment.active})});
+    await withPublishProgress("Gerando e validando o site. A versão atual permanece disponível…",()=>api(`/api/publish/${encodeURIComponent(doc.metadata.id)}`,{method:"POST",body:JSON.stringify({revision:doc.revision,expected_active:deployment.active})}));
 
     await refreshAfterSuccess(`Publicado em ${environmentLabel}.`, async()=>{await loadDeployments();await refreshEntries();await selectEntry(doc.metadata.id);});
 
@@ -394,8 +409,7 @@
   });};
   $("publish-sidebar").onclick=()=>busy($("publish-sidebar"),async()=>{
     if(sidebarDirty)throw new Error("Salve o rascunho da barra lateral antes de publicar.");
-    notice("Publicando barra lateral…");
-    await api("/api/homepage/publish",{method:"POST",body:JSON.stringify({revision:sidebarRevision,expected_active:deployment.active})});
+    await withPublishProgress("Gerando e validando a barra lateral. A versão atual permanece disponível…",()=>api("/api/homepage/publish",{method:"POST",body:JSON.stringify({revision:sidebarRevision,expected_active:deployment.active})}));
     $("sidebar-state").textContent="Barra lateral publicada. Confira a página inicial.";
     await refreshAfterSuccess("Barra lateral publicada. Rascunhos de artigos foram preservados.",loadDeployments);
   });
@@ -462,7 +476,7 @@
     for(const image of data.images){const button=document.createElement("button"),img=document.createElement("img"),label=document.createElement("span");button.type="button";button.className="image-card";img.src="/api/media"+image.path;img.alt=image.alt;img.loading="lazy";label.textContent=image.name||decodeURIComponent(image.path.split("/").pop());button.append(img,label);button.onclick=()=>selectImage(image);$("image-grid").append(button);}
     return data;
   }
-  function selectImage(image){delete $("remove-image").dataset.confirmPath;$("image-notice").hidden=true;selectedImage=image;$("library-preview").src="/api/media"+image.path;$("library-preview").alt=image.alt;$("image-path").value=image.path;$("image-alt").value=image.alt;$("image-caption").value=image.caption;$("image-width").value="480";refreshImageCode();$("remove-image").textContent=image.deleted ? "Restaurar na biblioteca" : "Excluir da biblioteca";$("image-dialog").showModal();}
+  function selectImage(image){delete $("remove-image").dataset.confirmPath;$("image-notice").hidden=true;selectedImage=image;$("purge-image").hidden=!image.deleted;$("library-preview").src="/api/media"+image.path;$("library-preview").alt=image.alt;$("image-path").value=image.path;$("image-alt").value=image.alt;$("image-caption").value=image.caption;$("image-width").value="480";refreshImageCode();$("remove-image").textContent=image.deleted ? "Restaurar na biblioteca" : "Excluir da biblioteca";$("image-dialog").showModal();}
   $("close-image").onclick=()=>$("image-dialog").close();
   for(const id of ["image-alt","image-caption","image-width"])$(id).oninput=refreshImageCode;
   async function copyImage(value){if(!navigator.clipboard){notice("Selecione e copie o campo acima.");return;}await navigator.clipboard.writeText(value);notice("Copiado.");}
@@ -470,6 +484,17 @@
   $("copy-image-html").onclick=()=>busy($("copy-image-html"),()=>copyImage(imageCode()));
   $("image-form").onsubmit=event=>{event.preventDefault();busy($("save-image"),async()=>{await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Imagem salva na biblioteca.",loadLibrary);});};
   $("remove-image").onclick=()=>busy($("remove-image"),async()=>{if(!selectedImage.deleted && $("remove-image").dataset.confirmPath!==selectedImage.path){$("remove-image").dataset.confirmPath=selectedImage.path;$("remove-image").textContent="Confirmar exclusão da biblioteca";notice("Clique novamente para excluir da biblioteca. Os arquivos usados em artigos e versões anteriores serão preservados.");return;}await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:!selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Biblioteca atualizada.",loadLibrary);});
+  let purgeTarget=null;
+  $("purge-image").onclick=()=>{purgeTarget=selectedImage;$("image-dialog").close();$("purge-image-name").textContent=purgeTarget.name||purgeTarget.path;$("purge-image-confirmation").value="";$("confirm-purge-image").disabled=true;$("purge-image-status").textContent="";$("purge-image-dialog").showModal();};
+  $("cancel-purge-image").onclick=()=>$("purge-image-dialog").close();
+  $("purge-image-confirmation").oninput=()=>{$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";};
+  $("purge-image-form").onsubmit=async event=>{
+    event.preventDefault();if(!purgeTarget||$("purge-image-confirmation").value!=="EXCLUIR IMAGEM"||$("confirm-purge-image").disabled)return;
+    $("confirm-purge-image").disabled=true;$("cancel-purge-image").disabled=true;$("purge-image-status").textContent="Verificando referências e excluindo…";
+    try {await api("/api/library/purge",{method:"POST",body:JSON.stringify({path:purgeTarget.path,revision:libraryRevision,confirmation:"EXCLUIR IMAGEM"})});$("purge-image-dialog").close();selectedImage=null;imageOffset=0;await refreshAfterSuccess("Imagem excluída definitivamente.",loadLibrary);}
+    catch(error){$("purge-image-status").textContent=error.message;}
+    finally{$("cancel-purge-image").disabled=false;$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";}
+  };
   $("insert-image").onclick=()=>{if(!doc||doc.trashed||$("html").readOnly)return;const code="\n"+imageCode()+"\n";const field=$("html");field.setRangeText(code,field.selectionStart,field.selectionEnd,"end");edit();$("image-dialog").close();showPage("/content/",true).catch(e=>notice(e.message,true));notice("Imagem inserida no HTML. Salve o rascunho para manter a alteração.");};
   $("image-search").oninput=()=>{clearTimeout(searchTimer);imageOffset=0;searchTimer=setTimeout(()=>loadLibrary().catch(e=>notice(e.message,true)),300);};
   $("image-filter").onchange=()=>{imageOffset=0;loadLibrary().catch(e=>notice(e.message,true));};

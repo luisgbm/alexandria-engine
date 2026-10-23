@@ -1968,3 +1968,171 @@ async fn removed_real_passkey_loses_access_and_remaining_key_still_signs_in() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media() {
+    let (temp, app) = fixture();
+    let root = temp.path().join("content");
+    let (cookie, csrf) = authenticated(&app);
+    for name in ["free", "draft", "history", "sidebar"] {
+        fs::write(root.join(format!("media/uploads/{name}.png")), b"image").unwrap();
+        library::uploaded(&root, &format!("/uploads/{name}.png"), name).unwrap();
+    }
+    fs::create_dir_all(root.join("media/wp-content/uploads")).unwrap();
+    fs::write(
+        root.join("media/wp-content/uploads/imported.png"),
+        b"imported",
+    )
+    .unwrap();
+    let draft = root.join("editorial/test/versions/prior");
+    fs::create_dir_all(&draft).unwrap();
+    fs::write(draft.join("body.html"), "<img src='/uploads/history.png'>").unwrap();
+    fs::write(
+        root.join("editorial/site.json"),
+        r#"{"homepage_sidebar_html":"<img src='/uploads/sidebar.png'>"}"#,
+    )
+    .unwrap();
+    app.store
+        .lock()
+        .unwrap()
+        .entries
+        .get_mut("wp-1")
+        .unwrap()
+        .html = "<img src='/uploads/draft.png'>".into();
+    // Store entries may include an unsaved in-memory fixture; a saved draft has its own immutable version.
+    fs::write(
+        root.join("articles/wp-1/body.html"),
+        "<img src='/uploads/draft.png'>",
+    )
+    .unwrap();
+    let list = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await
+    .2;
+    let payload = serde_json::json!({"path":"/uploads/free.png","revision":list["revision"],"confirmation":"EXCLUIR IMAGEM"});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/library/purge",
+            None,
+            None,
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/library/purge",
+            Some(&cookie),
+            None,
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/library/purge",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut revision = list["revision"].clone();
+    for path in [
+        "/uploads/draft.png",
+        "/uploads/history.png",
+        "/uploads/sidebar.png",
+        "/wp-content/uploads/imported.png",
+        "/uploads/free.png",
+    ] {
+        let (status,_,updated)=call(&app,"PUT","/api/library",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"alt":"","caption":"","deleted":true})).await;
+        assert_eq!(status, StatusCode::OK);
+        revision = updated["revision"].clone();
+        if path != "/uploads/free.png" {
+            assert_eq!(call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await.0,StatusCode::CONFLICT);
+            assert!(
+                root.join("media")
+                    .join(path.trim_start_matches('/'))
+                    .exists()
+            );
+        }
+    }
+    let mut payload =
+        serde_json::json!({"path":"/uploads/free.png","revision":revision,"confirmation":"wrong"});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/library/purge",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    payload["confirmation"] = "EXCLUIR IMAGEM".into();
+    payload["revision"] = "stale".into();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/library/purge",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    payload["revision"] = revision;
+    let (status, _, result) = call(
+        &app,
+        "POST",
+        "/api/library/purge",
+        Some(&cookie),
+        Some(&csrf),
+        payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["deleted"], true);
+    assert!(!root.join("media/uploads/free.png").exists());
+    let removed = call(
+        &app,
+        "GET",
+        "/api/library?deleted=true",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await
+    .2;
+    assert!(
+        !removed["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["path"] == "/uploads/free.png")
+    );
+}
