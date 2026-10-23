@@ -269,3 +269,37 @@ fn regenerates_category_lists_and_rejects_invalid_metadata_schema() {
     write_json(&folder.join("metadata.json"), &invalid).unwrap();
     assert!(load_entries(&content).is_err());
 }
+
+#[test]
+fn wordpress_more_sets_the_home_cutoff_and_preserves_the_complete_article() {
+    for marker in ["<p><span id=\"more-3148\"></span></p>", "<!--more-->"] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let (archive, rendered, inventory) = fixture(root);
+        let file = fs::read_dir(&rendered)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let prefix = format!(
+            "<p>{}<strong>EXACT CUTOFF</strong></p>",
+            "visible ".repeat(80)
+        );
+        fs::write(file,format!("<html><head><link rel=\"canonical\" href=\"https://www.example.com/artigos/oracao/\"></head><body><article id=\"post-1\"><div class=\"entry-content\">{prefix}{marker}<p>ONLY FULL ARTICLE</p></div></article></body></html>")).unwrap();
+        let content = root.join("content");
+        import::run(&archive, &rendered, &inventory, &content).unwrap();
+        let body = fs::read_to_string(content.join("articles/wp-1/body.html")).unwrap();
+        assert!(body.contains("<!--more-->"));
+        assert!(!body.contains("more-3148"));
+        let release = root.join("release");
+        build::run(&content, &release).unwrap();
+        let home = fs::read_to_string(release.join("public/index.html")).unwrap();
+        assert!(home.contains("<strong>EXACT CUTOFF</strong>")); // Explicit cutoff overrides 65 words.
+        assert!(!home.contains("ONLY FULL ARTICLE"));
+        assert!(home.contains("Continuar lendo"));
+        let article = fs::read_to_string(release.join("public/artigos/oracao/index.html")).unwrap();
+        assert!(article.contains("ONLY FULL ARTICLE"));
+        assert!(article.contains("<!--more-->"));
+    }
+}

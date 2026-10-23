@@ -45,6 +45,56 @@ pub fn text(input: &str) -> String {
         .join(" ")
 }
 
+fn normalize_more_nodes(doc: &NodeRef) {
+    for node in doc.select("span[id]").unwrap().collect::<Vec<_>>() {
+        let marker = node.attributes.borrow().get("id").is_some_and(|id| {
+            id.strip_prefix("more-").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+            })
+        });
+        if !marker
+            || node
+                .as_node()
+                .children()
+                .any(|n| n.as_text().is_none_or(|t| !t.borrow().trim().is_empty()))
+        {
+            continue;
+        }
+        let target = node
+            .as_node()
+            .parent()
+            .filter(|parent| {
+                parent
+                    .as_element()
+                    .is_some_and(|e| e.name.local.as_ref() == "p")
+                    && parent.children().all(|child| {
+                        child == *node.as_node()
+                            || child
+                                .as_text()
+                                .is_some_and(|t| t.borrow().trim().is_empty())
+                    })
+            })
+            .unwrap_or_else(|| node.as_node().clone());
+        target.insert_before(NodeRef::new_comment("more"));
+        target.detach();
+    }
+    for node in doc.descendants().collect::<Vec<_>>() {
+        if let Some(comment) = node.as_comment() {
+            let value = comment.borrow().trim().to_string();
+            if value == "more" || value.starts_with("more ") {
+                *comment.borrow_mut() = "more".into();
+            }
+        }
+    }
+}
+
+/// Normalize editor-visible markers without rewriting historical source files.
+pub fn normalize_more(input: &str) -> String {
+    let doc = kuchiki::parse_html().one(format!("<body>{input}</body>"));
+    normalize_more_nodes(&doc);
+    children(doc.select_first("body").unwrap().as_node())
+}
+
 /// Rewrite only this site's URLs and its WordPress image proxy URLs.
 pub fn local_url(value: &str, base: &str) -> String {
     let Ok(base) = Url::parse(base) else {
@@ -82,7 +132,17 @@ pub fn local_url(value: &str, base: &str) -> String {
 }
 
 pub fn sanitize(input: &str, base: &str) -> String {
-    let doc = kuchiki::parse_html().one(input);
+    let doc = kuchiki::parse_html().one(format!("<body>{input}</body>"));
+    normalize_more_nodes(&doc);
+    // Keep only the editorial More comment, never arbitrary imported comments.
+    for node in doc.descendants().collect::<Vec<_>>() {
+        if node
+            .as_comment()
+            .is_some_and(|c| c.borrow().as_str() != "more")
+        {
+            node.detach();
+        }
+    }
     for selector in [
         ".sharedaddy",
         "#jp-post-flair",
@@ -188,6 +248,7 @@ pub fn sanitize(input: &str, base: &str) -> String {
     let body = doc.select_first("body").unwrap();
     let mut cleaner = ammonia::Builder::default();
     cleaner
+        .strip_comments(false)
         .add_tags(["figure", "figcaption", "u", "center"])
         .add_generic_attributes(["class", "style", "id"])
         .add_tag_attributes("a", ["name"])
@@ -239,6 +300,35 @@ pub fn banner(snapshot: &str, base: &str) -> Option<String> {
 mod tests {
     use super::*;
     const BASE: &str = "https://www.example.com";
+
+    #[test]
+    fn more_markers_survive_sanitization_and_normalize_without_empty_paragraphs() {
+        for marker in [
+            "<p><span id=\"more-3148\"></span></p>",
+            "<span id='more-3148'></span>",
+            "<!--more-->",
+            "<!-- more Read on -->",
+        ] {
+            let input =
+                format!("<p>Before <em>cut</em>.</p>{marker}<p>After.</p><!--private note-->");
+            let clean = sanitize(&input, BASE);
+            assert_eq!(clean, "<p>Before <em>cut</em>.</p><!--more--><p>After.</p>");
+            assert_eq!(sanitize(&clean, BASE), clean);
+            assert!(!normalize_more(&input).contains("more-3148"));
+        }
+        assert_eq!(
+            sanitize("<!--more--><p>Body</p>", BASE),
+            "<!--more--><p>Body</p>"
+        );
+        assert_eq!(
+            sanitize("<p>Before<span id='more-12'></span>After</p>", BASE),
+            "<p>Before<!--more-->After</p>"
+        );
+        assert!(sanitize("<span id='more-info'></span>", BASE).contains("more-info"));
+        assert!(
+            sanitize("<span id='more-12'>Keep this text</span>", BASE).contains("Keep this text")
+        );
+    }
     #[test]
     fn keeps_poetry_and_captions_while_removing_active_content() {
         let s = sanitize(

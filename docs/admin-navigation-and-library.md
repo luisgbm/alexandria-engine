@@ -178,3 +178,25 @@ remain locked when their titles change. Suggestions do not save or publish draft
 Validation: `cargo test` and `node --test tests/admin-permalinks.test.cjs` cover
 normalization, collision suffixes, save-time races, reserved paths, authentication,
 CSRF, published addresses, manual overrides and stale suggestion responses.
+
+## WordPress More marker and homepage previews
+
+The canonical cutoff is `<!--more-->`. Import and sanitization convert an empty
+WordPress `<span id="more-3148"></span>` (including its otherwise empty paragraph)
+into that comment and preserve it on save. The editor normalizes existing bodies
+when opening them, without rewriting immutable WordPress sources or old revisions.
+Other imported comments remain stripped from sanitized content.
+
+Homepage previews show sanitized, formatted HTML before the first More marker;
+the explicit cutoff takes precedence over the old 65-word fallback. The complete
+article retains all content after the marker. Without a marker the existing
+65-word plain-text preview remains in effect. The homepage still lists ten
+articles and retains pagination. A marker inside a paragraph is safely balanced
+when rendering the preview fragment. CSS contains floated preview images.
+
+Staging verification on 2026-10-23: rebuilt the existing published snapshot as
+`release-20261023T184014-4b2399a4c29f`, preserving its source files byte for byte.
+The 1,095 generated pages passed 24,422 internal-link checks with no missing
+paths. All nine marked articles among the ten current homepage entries were
+checked against their exact cutoff; the tenth uses the fallback. The preceding
+release remains available for rollback. No drafts were promoted.
