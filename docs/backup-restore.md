@@ -194,3 +194,54 @@ The tested recovery point was 06:43 Brasília on October 23 and contains one
 passkey, ten editorial versions and one upload. Later staging work is outside
 that snapshot. Take and verify a new off-server backup before production; do not
 confuse transfer/check success with capture of a new recovery point.
+
+## Capturing a genuinely fresh recovery point on demand
+
+`-Force` bypasses the Windows monthly skip but deliberately reuses a prepared
+snapshot from the current month. To capture new edits/authenticator registrations,
+first run the server capture explicitly, then synchronize the encrypted delta:
+
+```powershell
+ssh -n alexandria "sudo -n su -c 'systemctl start alexandria-backup.service'"
+if ($LASTEXITCODE -ne 0) { throw 'Fresh server capture failed' }
+& ./scripts/backup-to-local-pc.ps1 -Force
+```
+
+The public Nginx site stays available; consistent capture briefly pauses admin
+and analytics writers, then resumes them. A successful server unit alone is not
+off-server protection: wait for the PC full-data check and verified repository
+promotion. Monthly scheduling and twelve-month retention remain unchanged.
+
+The additional read-only checker `scripts/verify-pc-recovery-point.py` decrypts
+selected files into memory, verifies the captured database hash/integrity and
+at least two passkeys, checks the expected active release, all eight link repairs,
+449 clean published records, retired-draft/test exclusions from the published
+snapshot and preservation of private test drafts. It does not write a plaintext
+database to disk. Provide `--restic`, `--repo`, `--password-file`,
+`--expected-release` and a private `--output` report path. It complements rather
+than replaces Restic's full repository data check.
+
+## Fresh recovery point verified — 2026-10-23
+
+A new explicit server capture and PC delta transfer completed successfully after
+the fresh-VPS rehearsal. Snapshot `06765729` was created at 11:05 Brasília
+(14:05 UTC); full PC repository verification and promotion finished at 11:07.
+Only six encrypted repository files changed (50,176,000 bytes transferred).
+Restic read every pack (23) and found no errors. The monthly policy was unchanged.
+
+`fresh-backup-20261023.json` in the private admin-validation folder confirms:
+
+- Two passkeys in the captured SQLite database; database hash/integrity passed.
+- Active release `staging-clean-20261023-v3` and its matching snapshot/symlink.
+- 449 published document records, excluding the four known test documents and
+  five retired WordPress drafts from the active published snapshot.
+- All eight approved link corrections verified against manifest hashes.
+- Matching corrected staging editor base bodies, so future publication preserves
+  the fixes; all four private test draft histories remain recoverable.
+- No plaintext database written to the PC during these additional checks.
+
+The live staging symlink and services remained unchanged; static HTTP stayed 200.
+Admin writers were briefly paused only for consistent capture and then resumed.
+The server's temporary plaintext capture was removed after encryption. No original
+website/server access or DNS changes occurred. This verifies the newer recovery
+point; it does not repeat the entire fresh-VPS rehearsal for that new snapshot.

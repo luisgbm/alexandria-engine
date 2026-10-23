@@ -29,7 +29,9 @@ from a historical setup example. Its destination must end in `/public`.
 - [WordPress inventory and known broken links](migration-inventory.md).
 
 The fresh-VPS restore rehearsal passed; see its evidence and limitations above.
-Production hostname transition and a fresh verified backup remain launch work. Staging credentials and recovery artifacts must not be copied blindly to a
+Production hostname transition remains launch work. A fresh verified PC backup
+now includes both passkeys and clean-v3; refresh it after further authentication
+or content changes before cutover. Staging credentials and recovery artifacts must not be copied blindly to a
 new WebAuthn relying-party hostname. Bootstrap the final hostname, enroll two
 passkeys, and export corresponding recovery material before relying on it.
 

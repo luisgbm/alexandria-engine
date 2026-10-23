@@ -130,3 +130,14 @@ only the original VPS. Temporary PC/transit archives were removed; the encrypted
 PC repository and separately stored recovery key remain intact. Final checks
 confirmed the original staging symlink, homepage SHA-256 and active services were
 unchanged.
+
+## Subsequent backup freshness closure
+
+After the rehearsal, a genuinely new capture was encrypted and verified on the
+PC: snapshot `06765729`, 2026-10-23 11:05 Brasília. It includes both passkeys,
+`staging-clean-20261023-v3`, all eight link repairs and the clean 449-item public
+snapshot, with private test drafts retained. Full Restic data verification and
+selected in-memory content/database checks passed; see [backup evidence](backup-restore.md#fresh-recovery-point-verified--2026-10-23).
+The earlier full fresh-VPS drill still refers to snapshot `16dcc2c8`; do not
+attribute its full-machine exercise to the newer snapshot. Refresh backups again
+if authentication/content changes before launch.

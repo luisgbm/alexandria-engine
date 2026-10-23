@@ -119,8 +119,10 @@ launch. Trash deliberately does not remove already published content.
    A disposable private Ubuntu VM was restored from the encrypted PC repository;
    services, rebuild, editor APIs, publication/rollback and reboot checks passed.
    Hardware passkey login and ACME renewal on the clone were not exercised.
-   The recovery point predates later work: capture a fresh verified off-server
-   backup before launch. The following describes the rehearsal scope. Restore onto a
+   The drill recovery point predates later work. A subsequent fresh PC backup
+   (`06765729`, October 23 11:05 Brasília) now includes both passkeys, all eight
+   repairs and clean-v3; full repository/data checks passed. Refresh after any
+   further authentication/content changes before launch. The following describes the rehearsal scope. Restore onto a
    disposable clean Ubuntu environment using the PC encrypted copy and separately
    held key; provision users/packages/Nginx/systemd/TLS/logging and prove build,
    authentication, upload, publishing, rollback and analytics. Existing drill
