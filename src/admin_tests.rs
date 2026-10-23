@@ -1710,3 +1710,261 @@ async fn homepage_settings_require_auth_csrf_sanitize_and_preserve_private_draft
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn passkey_removal_requires_confirmation_fresh_auth_and_keeps_the_last_key() {
+    let (_temp, app) = fixture();
+    let (cookie, csrf) = authenticated(&app);
+    {
+        let db = app.db.lock().unwrap();
+        for id in ["key-a", "key-b"] {
+            db.execute(
+                "INSERT INTO credentials VALUES(?1,?1,'{}',?2)",
+                params![id, now()],
+            )
+            .unwrap();
+        }
+    }
+    let a = format!("/api/credentials/{}/remove", digest("key-a"));
+    let b = format!("/api/credentials/{}/remove", digest("key-b"));
+    let confirm = serde_json::json!({"confirmation":"REMOVER PASSKEY"});
+    assert_eq!(
+        call(&app, "POST", &a, None, None, confirm.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, "POST", &a, Some(&cookie), None, confirm.clone())
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &a,
+            Some(&cookie),
+            Some(&csrf),
+            serde_json::json!({"confirmation":""})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    app.db
+        .lock()
+        .unwrap()
+        .execute("UPDATE sessions SET auth_at=?1", [now() - 301])
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &a,
+            Some(&cookie),
+            Some(&csrf),
+            confirm.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    app.db
+        .lock()
+        .unwrap()
+        .execute("UPDATE sessions SET auth_at=?1", [now()])
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/credentials/missing/remove",
+            Some(&cookie),
+            Some(&csrf),
+            confirm.clone()
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (one, two) = tokio::join!(
+        call(
+            &app,
+            "POST",
+            &a,
+            Some(&cookie),
+            Some(&csrf),
+            confirm.clone()
+        ),
+        call(&app, "POST", &b, Some(&cookie), Some(&csrf), confirm)
+    );
+    assert!(matches!(
+        (one.0, two.0),
+        (StatusCode::OK, StatusCode::CONFLICT) | (StatusCode::CONFLICT, StatusCode::OK)
+    ));
+    let db = app.db.lock().unwrap();
+    assert_eq!(count_credentials(&db).unwrap(), 1);
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM audit WHERE event='passkey_removed'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn removed_real_passkey_loses_access_and_remaining_key_still_signs_in() {
+    let (_temp, app) = fixture();
+    let origin = url::Url::parse("http://localhost:8781").unwrap();
+    let mut first = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut second = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut cookie = String::new();
+    let mut csrf = String::new();
+    for (i, auth) in [&mut first, &mut second].into_iter().enumerate() {
+        let (_, headers, flow) = call(
+            &app,
+            "POST",
+            "/api/auth/register/start",
+            if i == 0 { None } else { Some(&cookie) },
+            if i == 0 { None } else { Some(&csrf) },
+            serde_json::json!({"bootstrap":"a".repeat(64)}),
+        )
+        .await;
+        let flow_cookie = format!("{}; {}", cookie, session_cookie(&headers, FLOW_COOKIE));
+        let credential = auth
+            .do_registration(
+                origin.clone(),
+                serde_json::from_value(flow["options"].clone()).unwrap(),
+            )
+            .unwrap();
+        let (status,headers,response)=call(&app,"POST","/api/auth/register/finish",Some(&flow_cookie),if i==0 {None}else{Some(&csrf)},serde_json::json!({"id":flow["id"],"credential":credential,"name":format!("Device {i}")})).await;
+        assert_eq!(status, StatusCode::OK);
+        cookie = session_cookie(&headers, SESSION_COOKIE);
+        csrf = response["csrf"].as_str().unwrap().to_owned();
+    }
+    let (_, _, keys) = call(
+        &app,
+        "GET",
+        "/api/credentials",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let handle = keys["credentials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|k| k["name"] == "Device 0")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(handle.len(), 64);
+    assert!(keys["credentials"][0].get("passkey").is_none());
+    // A previously issued challenge must not authenticate a removed key.
+    let (_, headers, pending) = call(
+        &app,
+        "POST",
+        "/api/auth/login/start",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let pending_cookie = session_cookie(&headers, FLOW_COOKIE);
+    let signature = first
+        .do_authentication(
+            origin.clone(),
+            serde_json::from_value(pending["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let (other_cookie, _) = authenticated(&app);
+    let (status, _, result) = call(
+        &app,
+        "POST",
+        &format!("/api/credentials/{handle}/remove"),
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"confirmation":"REMOVER PASSKEY"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["remaining"], 1);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/session",
+            Some(&other_cookie),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/session",
+            Some(&cookie),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/login/finish",
+            Some(&pending_cookie),
+            None,
+            serde_json::json!({"id":pending["id"],"credential":signature})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (_, headers, flow) = call(
+        &app,
+        "POST",
+        "/api/auth/login/start",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(
+        flow["options"]["publicKey"]["allowCredentials"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let signature = second
+        .do_authentication(
+            origin,
+            serde_json::from_value(flow["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/auth/login/finish",
+            Some(&session_cookie(&headers, FLOW_COOKIE)),
+            None,
+            serde_json::json!({"id":flow["id"],"credential":signature})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}

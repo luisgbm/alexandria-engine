@@ -10,7 +10,7 @@ Production remains on hold. The original WordPress website and DNS are unchanged
 | `/images/` | Browsable/searchable image library, uploads and image metadata |
 | `/categories/` | Create, rename, order and remove unused categories |
 | `/publications/` | Active release, deployment history and rollback |
-| `/security/` | Registered devices and adding another passkey |
+| `/security/` | Registered devices, enrollment and confirmed passkey removal |
 
 Navigation preserves the open editor and unsaved text in the same tab. Browser
 back/forward work, and page URLs can be opened directly. Reloading or closing a
@@ -447,10 +447,10 @@ Etiquetas has been removed from the editor, save API and admin list search.
 Previously imported tag fields remain readable for old content and revision
 compatibility; the admin no longer edits or searches them. Categories remain.
 
-Segurança currently lists registered passkeys and allows enrollment. It does not
-yet offer removal/revocation. Removing a credential from a device password manager
-is separate from revoking its server registration. Do not use account recovery
-as a routine way to remove one key: that workflow revokes all keys and sessions.
+Segurança lists registered passkeys and allows enrollment and confirmed removal.
+Removing a credential from a device password manager is separate from revoking
+its server registration. Do not use account recovery as a routine way to remove
+one key: that workflow revokes all keys and sessions.
 
 
 480px staging verification: release `release-20261023T202054-317f91629ea4`
@@ -468,3 +468,48 @@ Browser checks measured a loaded centered image at 480px on desktop and 343.2px
 inside its 343.2px mobile container, with no horizontal overflow. Screenshot:
 `admin-validation/article-image-480-desktop-20261023.png`. Both passkeys remain
 registered; no credentials were changed.
+
+
+## Removing a passkey
+
+Open **Segurança**, find the device by its name and enrollment date, and choose
+**Remover passkey**. The confirmation dialog names that device and explains the
+consequences. **Cancelar** or Escape leaves it unchanged. Confirm **Remover
+passkey** to revoke its server registration. Authentication must be no older
+than five minutes; if asked, sign out and sign in again, then retry.
+
+The last registered key has a disabled remove button. The server independently
+checks this inside an immediate SQLite transaction, including competing requests
+or stale tabs, and refuses to remove the final key. Enroll and test a replacement
+before removing a device. A removed device can be enrolled again as a new key.
+The browser cannot erase the device's password-manager entry; delete that copy
+separately if desired.
+
+A successful removal invalidates other admin sessions and pending authentication
+flows, keeping only the session making the request and its previews. This also
+revokes sessions that could have originated from a lost device; session records
+predating this feature do not identify their originating key. Private drafts and
+published content remain intact. Removal is audit logged with an opaque handle.
+
+The endpoint is `POST /api/credentials/{id}/remove` with JSON
+`{"confirmation":"REMOVER PASSKEY"}`. It requires an authenticated session,
+matching Origin and CSRF token and recent authentication. The authenticated
+credential list supplies stable SHA-256 handles, names and enrollment dates,
+never stored WebAuthn records. Unknown/already removed IDs return 404; the final
+key returns 409; stale authentication returns 403 with a sign-in instruction.
+
+Validation uses ephemeral test databases and software authenticators, never
+synthetic credentials in the live staging account. Tests cover confirmation,
+CSRF, fresh sign-in, competing removals, audit persistence, cancellation, inline
+error feedback, list refresh and last-key disabling. Real WebAuthn signatures
+verify that an outstanding removed-key challenge fails, other sessions expire,
+and the remaining key still signs in.
+
+
+Staging deployment verified: 43 Rust tests and two passkey UI tests passed (one
+unrelated root-only recovery test remains intentionally ignored). Live admin
+HTML/JavaScript expose the new controls; an unauthenticated removal returns 401.
+Both genuine credential records were verified byte-for-byte unchanged. The
+public release is still `release-20261023T202054-317f91629ea4` and returns 200.
+Private pre-deployment binary/state backup:
+`/root/alexandria-before-passkey-removal-20261023T202925Z`.
