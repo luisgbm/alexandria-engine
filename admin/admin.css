@@ -4,5 +4,10 @@
 
 /* One persistent action status, visible even when the editor is far down the page. */
 body{padding-bottom:7rem}
-#notice{position:fixed;z-index:100;bottom:max(1rem,env(safe-area-inset-bottom));left:3vw;right:3vw;max-width:56rem;margin:0 auto;padding:.8rem 1rem;border:1px solid #afc9b5;border-radius:8px;background:#edf5ee;color:#214c32;box-shadow:0 3px 16px #15251d30;font-size:.95rem;max-height:30vh;overflow:auto}
+#notice{position:fixed;z-index:100;bottom:max(1rem,env(safe-area-inset-bottom));left:50%;right:auto;transform:translateX(-50%);width:calc(100vw - 2rem);max-width:56rem;margin:0;padding:.8rem 1rem;border:1px solid #afc9b5;border-radius:8px;background:#edf5ee;color:#214c32;box-shadow:0 3px 16px #15251d30;font-size:.95rem;max-height:30vh;overflow:auto}
 #notice.error{border-color:#d9a5a5;background:#fff0ee;color:#8a2020}
+
+/* Allow narrow editor grids and long release identifiers to shrink and wrap. */
+.layout>*,.fields>*{min-width:0}
+#notice,#release-list li,#revision-list li,#active-release{overflow-wrap:anywhere}
+@media(max-width:900px){.layout{grid-template-columns:minmax(0,1fr)}.top{flex-wrap:wrap}.upload-row{flex-wrap:wrap}}
