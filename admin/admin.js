@@ -243,7 +243,7 @@
 
       button.type="button";button.textContent=entry.title;button.classList.toggle("selected",doc?.metadata.id===entry.id);
 
-      small.textContent=`${entry.kind==="page" ? "Página" : "Artigo"} · ${entry.trashed ? "Lixeira" : entry.has_saved_draft ? "Rascunho" : "Publicado"} · ${entry.date.slice(0,10)}`;
+      small.textContent=`${entry.kind==="page" ? "Página" : "Artigo"} · ${entry.trashed ? "Lixeira" : entry.status!=="published" ? "Rascunho" : entry.has_saved_draft ? "Publicado · alterações em rascunho" : "Publicado"} · ${entry.date.slice(0,10)}`;
 
       button.append(small);button.onclick=()=>busy(button,()=>selectEntry(entry.id));li.append(button);$("articles").append(li);
 
@@ -271,7 +271,7 @@
 
     $("categories").replaceChildren();for(const cat of categories){const option=document.createElement("option");option.value=cat.slug;option.textContent=cat.name;option.selected=m.categories.includes(cat.slug);$("categories").append(option);}
 
-    const generated=m.listings.length>0;$("publish").hidden=!deployment?.enabled;$("publish").disabled=data.trashed;$("html").readOnly=generated;$("save").disabled=data.trashed;$("entry-state").textContent=generated ? "Página com lista automática" : data.publication_status==="published" ? "Conteúdo publicado · edição em rascunho" : "Rascunho privado";
+    const generated=m.listings.length>0;$("publish").hidden=!deployment?.enabled;$("publish").disabled=data.trashed;$("html").readOnly=generated;$("save").disabled=data.trashed;$("entry-state").textContent=generated ? "Página com lista automática" : data.publication_status==="published" ? (data.has_saved_draft ? "Conteúdo publicado · alterações em rascunho" : "Conteúdo publicado · sem alterações pendentes") : "Rascunho privado";
 
     for(const field of $("editor").querySelectorAll("input,textarea,select"))field.disabled=data.trashed;
 

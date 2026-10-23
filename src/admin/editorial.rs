@@ -137,6 +137,7 @@ fn historic(store: &Store, id: &str, revision: &str) -> ApiResult<Document> {
             html: fs::read_to_string(root.join("body.html")).map_err(anyhow::Error::from)?,
             revision: "original".into(),
             publication_status: current.publication_status,
+            has_saved_draft: true,
             trashed: false,
             permalink_locked: current.permalink_locked,
         });
@@ -162,6 +163,7 @@ fn historic(store: &Store, id: &str, revision: &str) -> ApiResult<Document> {
         html: fs::read_to_string(root.join("body.html")).map_err(anyhow::Error::from)?,
         revision: revision.into(),
         publication_status: current.publication_status,
+        has_saved_draft: true,
         trashed: false,
         permalink_locked: current.permalink_locked,
     })
@@ -252,7 +254,7 @@ pub(super) async fn restore(
         "revision_restored",
         &format!("{id}:{}", input.from),
     )?;
-    Ok(Json(restored))
+    Ok(Json(store.entries[&restored.metadata.id].clone()))
 }
 #[derive(Deserialize)]
 pub(super) struct Trash {
@@ -283,7 +285,7 @@ pub(super) async fn trash(
         },
         &id,
     )?;
-    Ok(Json(doc))
+    Ok(Json(store.entries[&doc.metadata.id].clone()))
 }
 pub(super) fn catalog_revision(store: &Store) -> Result<String> {
     Ok(digest(&serde_json::to_string(&store.site)?))

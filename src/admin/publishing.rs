@@ -499,12 +499,41 @@ impl Publisher {
     pub(super) fn sync_store(&self, store: &mut Store) -> Result<()> {
         let active = self.active()?;
         let entries = load_entries(&self.root.join("snapshots").join(active))?;
+        store.published_fingerprints = entries
+            .iter()
+            .filter(|e| e.metadata.status == "published")
+            .map(|e| {
+                Ok((
+                    e.metadata.id.clone(),
+                    publication_fingerprint(&e.metadata, &e.body, &store.site.base_url)?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
         let published: BTreeMap<_, _> = entries
             .into_iter()
-            .map(|e| (e.metadata.id, e.metadata.status))
+            .map(|e| (e.metadata.id.clone(), e))
             .collect();
         for (id, doc) in &mut store.entries {
-            doc.publication_status = published.get(id).cloned().unwrap_or_else(|| "draft".into());
+            doc.publication_status = published
+                .get(id)
+                .map(|entry| entry.metadata.status.clone())
+                .unwrap_or_else(|| "draft".into());
+            // Without a private saved revision, edit the active public content,
+            // not an older imported body that could undo a later cleanup.
+            if let Some(entry) = published
+                .get(id)
+                .filter(|entry| entry.metadata.status == "published")
+            {
+                if !store.root.join("editorial").join(id).join("draft").exists() {
+                    doc.revision = digest(&format!(
+                        "{}\0{}",
+                        serde_json::to_string(&entry.metadata)?,
+                        entry.body
+                    ));
+                    doc.metadata = entry.metadata.clone();
+                    doc.html = html::normalize_more(&entry.body);
+                }
+            }
             doc.permalink_locked |= doc.publication_status == "published"
                 || store
                     .root
@@ -513,6 +542,7 @@ impl Publisher {
                     .join("published-path")
                     .exists();
         }
+        store.refresh_draft_flags()?;
         Ok(())
     }
 }
@@ -898,6 +928,23 @@ pub(super) async fn rollback(
 mod publishing_tests {
     use super::*;
     #[test]
+    fn unsaved_imported_content_uses_current_public_snapshot_not_stale_source() {
+        let (_temp, p, content, _doc) = setup();
+        fs::remove_file(content.join("editorial/wp-1/draft")).unwrap();
+        fs::write(
+            p.root.join("snapshots/baseline/articles/wp-1/body.html"),
+            "<p>Current cleaned public content</p>",
+        )
+        .unwrap();
+        let mut store = Store::open(content).unwrap();
+        p.sync_store(&mut store).unwrap();
+        assert_eq!(
+            store.entries["wp-1"].html,
+            "<p>Current cleaned public content</p>"
+        );
+        assert!(!store.entries["wp-1"].has_saved_draft);
+    }
+    #[test]
     fn retained_release_media_is_protected_even_without_an_article_reference() {
         let (_temp, p, _content, _doc) = setup();
         assert!(!p.retained_media("/uploads/unused.png").unwrap());
@@ -1029,7 +1076,11 @@ mod publishing_tests {
         other.metadata.permalink = Some("/artigos/unselected/".into());
         other.revision = "private-other".into();
         store.commit(other).unwrap();
+        assert!(store.entries["wp-1"].has_saved_draft);
         let active = p.deploy(&content, &doc, "baseline", "test").unwrap();
+        p.sync_store(&mut store).unwrap();
+        assert!(!store.entries["wp-1"].has_saved_draft);
+        assert!(store.entries["art-unselected"].has_saved_draft);
         assert_eq!(p.active().unwrap(), active);
         assert!(
             fs::read_to_string(p.root.join("current/artigos/original/index.html"))
@@ -1043,6 +1094,8 @@ mod publishing_tests {
         );
         assert!(p.deploy(&content, &doc, "baseline", "test").is_err());
         p.rollback_to("baseline", &active, "test").unwrap();
+        p.sync_store(&mut store).unwrap();
+        assert!(store.entries["wp-1"].has_saved_draft);
         assert_eq!(
             fs::read(p.root.join("current/artigos/original/index.html")).unwrap(),
             original

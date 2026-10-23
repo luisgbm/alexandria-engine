@@ -2136,3 +2136,73 @@ async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media(
             .any(|i| i["path"] == "/uploads/free.png")
     );
 }
+
+#[tokio::test]
+async fn unchanged_saved_revisions_are_not_drafts_but_real_edits_are() {
+    let (_temp, app) = fixture();
+    let (cookie, csrf) = authenticated(&app);
+    let mut payload = serde_json::json!({"revision":app.store.lock().unwrap().entries["wp-1"].revision,"title":"Original","html":"<p>Original body</p>","permalink":"/artigos/original/","published_local":"2026-10-16T15:00:00","categories":["artigos"],"featured_image":null,"featured_image_alt":"","featured_image_caption":""});
+    for (body, expected) in [
+        ("<p>Original body</p>", false),
+        ("<p>Unpublished edit</p>", true),
+        ("<p>Original body</p>", false),
+    ] {
+        payload["html"] = body.into();
+        let (status, _, doc) = call(
+            &app,
+            "PUT",
+            "/api/articles/wp-1",
+            Some(&cookie),
+            Some(&csrf),
+            payload.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(doc["has_saved_draft"], expected);
+        assert_eq!(doc["metadata"]["status"], "draft");
+        payload["revision"] = doc["revision"].clone();
+        let (_, _, list) = call(
+            &app,
+            "GET",
+            "/api/articles",
+            Some(&cookie),
+            None,
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(list["entries"][0]["has_saved_draft"], expected);
+    }
+    let root = app.store.lock().unwrap().root.clone();
+    let reopened = Store::open(root).unwrap();
+    assert!(!reopened.entries["wp-1"].has_saved_draft);
+}
+
+#[test]
+fn publication_comparison_ignores_bookkeeping_but_includes_article_metadata() {
+    let (_temp, app) = fixture();
+    let store = app.store.lock().unwrap();
+    let doc = &store.entries["wp-1"];
+    let original = publication_fingerprint(&doc.metadata, &doc.html, &store.site.base_url).unwrap();
+    let mut m = doc.metadata.clone();
+    m.status = "draft".into();
+    m.modified_at = Some(Utc::now().to_rfc3339());
+    m.featured_image_alt = Some("".into());
+    m.published_at = Some("2026-10-16T18:00:00Z".into());
+    assert_eq!(
+        publication_fingerprint(&m, &doc.html, &store.site.base_url).unwrap(),
+        original
+    );
+    for field in ["title", "date", "categories", "image"] {
+        let mut changed = m.clone();
+        match field {
+            "title" => changed.title = "Changed".into(),
+            "date" => changed.original_published_local = "2026-10-17 15:00:00".into(),
+            "categories" => changed.categories = vec![],
+            _ => changed.featured_image = Some("/uploads/changed.jpg".into()),
+        };
+        assert_ne!(
+            publication_fingerprint(&changed, &doc.html, &store.site.base_url).unwrap(),
+            original
+        );
+    }
+}

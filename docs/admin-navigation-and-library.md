@@ -589,3 +589,35 @@ menus respect reduced-motion preferences. Browser checks confirmed 500-weight
 links, the expected open/closed transforms and no mobile horizontal overflow.
 Screenshot (isolated preview data):
 `admin-validation/admin-matching-menu-20261023.png`.
+
+
+## Draft classification
+
+A saved editor revision is not automatically an unpublished draft. The server
+compares its sanitized HTML and publication metadata with the active release.
+Draft/published storage status and save timestamps are ignored; equivalent time
+zones and empty legacy feature fields are normalized. Category/tag/legacy URL
+ordering does not create a pending change. Title, text, publication date,
+permalink, categories and image changes remain significant.
+
+The same classification is used by the content list, Rascunhos filter, editor
+heading and save/restore responses. A published article with no differences is
+**Publicado**; a changed one is **Publicado · alterações em rascunho**. New or
+unpublished entries remain drafts. Publication clears the pending flag; rollback
+recalculates it against the restored public release without deleting revisions.
+
+Entries without a private saved draft use the active published snapshot as their
+editable baseline, preserving prior link/content cleanup instead of presenting
+an outdated imported body. Imported originals remain accessible in history.
+The service records only aggregate publication/draft counts at startup, allowing
+verification without creating a privileged browser session.
+
+
+Draft-status deployment verified: 48 Rust tests and 16 JavaScript tests passed
+(one unrelated root-only recovery test remains intentionally ignored). Tests
+cover no-op saves, real text/metadata changes, persisted/reopened state, filtering
+and labels, publishing, rollback, and using the latest public baseline. Staging
+startup reports 450 published entries, 5 unpublished entries, and 0 published
+entries with pending changes. Content/revision files and credential records were
+verified unchanged; the public release was not rebuilt or switched. Binary backup:
+`/root/alexandria-before-draft-status-20261023T231728Z`.
