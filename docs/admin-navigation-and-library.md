@@ -382,3 +382,51 @@ unrelated root-only test remains intentionally ignored). Tests cover default and
 custom sizes, invalid-input controls, metadata escaping and sanitizer persistence.
 The deployed staging admin serves the new control and generator. The published
 release remains `release-20261023T194906-8c80b3e2439a`; no content was published.
+
+
+## One-time article image cleanup
+
+The root-only `normalize-article-images` command applies the image defaults to
+current published posts and current editable post drafts. It preserves smaller
+explicit widths, caps larger/unspecified widths at 320px, adjusts numeric heights
+proportionally, centers images/figures, and adds responsive image styles. Existing
+srcset URLs remain available with sizes updated for the smaller display width.
+Legacy featured images move into article HTML (an existing occurrence is reused).
+Pages, historical revisions, publication dates, image files and URLs are preserved.
+This is an explicit migration, not a rendering policy: future custom widths remain
+valid. Trashed documents are excluded.
+
+Run first with `--dry-run`. For application, stop only the admin service, take a
+root-private copy of the installed binary, editorial directory and state, and run:
+
+```sh
+sudo /opt/alexandria/admin-staging/alexandria-engine normalize-article-images \
+  --content /var/lib/alexandria-admin-staging/content \
+  --state /var/lib/alexandria-admin-staging/state \
+  --expected-active CURRENT_RELEASE
+```
+
+Restart the admin even if migration fails. Public Nginx remains available. The
+command builds/validates a new immutable public release and creates new private
+editor revisions without promoting private content or appearance settings. Public
+activation and editorial revision writes are separate; after an interrupted run,
+inspect the active release and rerun with that expected release. The migration is
+idempotent. Public rollback uses the usual publication history; reverting editor
+changes uses prior revisions or the private editorial backup, independently.
+
+Applied on staging as `release-20261023T201104-3d5016ee7765`: 248 published posts
+updated and 249 new editor revisions. Verified all 252 published article images,
+including 35 smaller images preserved, and 253 current editable article images.
+The three legacy feature references already occurred in their article HTML with
+captions and were reused. All original image URLs/alt text, public page files,
+public site settings, publication dates and 27 historical version files were
+verified unchanged. A second dry run reported zero changes. Backup:
+`/root/alexandria-before-article-image-defaults-20261023T201103Z`.
+
+Validation: migration tests cover proportional dimensions, small images, metadata,
+idempotence, legacy features, page exclusion and protection of private drafts and
+sidebar changes. The generated release passed 23,912 internal-link checks with no
+missing paths; Nginx syntax and both public/admin HTTP checks passed. Browser
+checks confirmed a loaded, centered 320px image on desktop and mobile with no
+horizontal overflow. Private screenshot:
+`admin-validation/article-image-defaults-mobile-20261023.png`.

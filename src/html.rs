@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use kuchiki::{NodeRef, traits::TendrilSink};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use url::Url;
 
 pub fn escape(s: &str) -> String {
@@ -92,6 +92,82 @@ fn normalize_more_nodes(doc: &NodeRef) {
 pub fn normalize_more(input: &str) -> String {
     let doc = kuchiki::parse_html().one(format!("<body>{input}</body>"));
     normalize_more_nodes(&doc);
+    children(doc.select_first("body").unwrap().as_node())
+}
+
+/// One-time editorial cleanup, not a rendering policy: future custom widths stay valid.
+pub fn apply_article_image_defaults(input: &str, base: &str) -> String {
+    let clean = sanitize(input, base);
+    let doc = kuchiki::parse_html().one(format!("<body>{clean}</body>"));
+    let images = doc.select("img").unwrap().collect::<Vec<_>>();
+    if images.is_empty() {
+        return input.to_owned();
+    }
+    fn centered_classes(value: &str) -> String {
+        let mut classes = value
+            .split_whitespace()
+            .filter(|v| !["alignleft", "alignright"].contains(v))
+            .collect::<Vec<_>>();
+        if !classes.contains(&"aligncenter") {
+            classes.push("aligncenter");
+        }
+        classes.join(" ")
+    }
+    fn rules(value: &str) -> BTreeMap<String, String> {
+        value
+            .split(';')
+            .filter_map(|rule| {
+                rule.split_once(':')
+                    .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+            })
+            .collect()
+    }
+    fn styles(value: BTreeMap<String, String>) -> String {
+        value
+            .into_iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+    for image in images {
+        let mut attrs = image.attributes.borrow_mut();
+        let old_width = attrs
+            .get("width")
+            .and_then(|s| s.parse::<u32>().ok())
+            .filter(|w| *w > 0);
+        let width = old_width.unwrap_or(320).min(320);
+        let height = old_width
+            .zip(attrs.get("height").and_then(|s| s.parse::<u32>().ok()))
+            .map(|(w, h)| ((h as f64 * width as f64 / w as f64).round() as u32).max(1));
+        attrs.insert("width", width.to_string());
+        if let Some(height) = height {
+            attrs.insert("height", height.to_string());
+        } else {
+            attrs.remove("height");
+        }
+        let class = centered_classes(attrs.get("class").unwrap_or(""));
+        attrs.insert("class", class);
+        let mut style = rules(attrs.get("style").unwrap_or(""));
+        style.remove("float");
+        style.insert("max-width".into(), "100%".into());
+        style.insert("height".into(), "auto".into());
+        attrs.insert("style", styles(style));
+        if attrs.get("srcset").is_some() {
+            attrs.insert("sizes", format!("(max-width: {width}px) 100vw, {width}px"));
+        }
+    }
+    for figure in doc.select("figure").unwrap() {
+        if figure.as_node().select_first("img").is_err() {
+            continue;
+        }
+        let mut attrs = figure.attributes.borrow_mut();
+        let class = centered_classes(attrs.get("class").unwrap_or(""));
+        attrs.insert("class", class);
+        let mut style = rules(attrs.get("style").unwrap_or(""));
+        style.remove("float");
+        style.insert("text-align".into(), "center".into());
+        attrs.insert("style", styles(style));
+    }
     children(doc.select_first("body").unwrap().as_node())
 }
 
@@ -302,6 +378,36 @@ pub fn banner(snapshot: &str, base: &str) -> Option<String> {
 mod tests {
     use super::*;
     const BASE: &str = "https://www.example.com";
+
+    #[test]
+    fn article_image_cleanup_preserves_small_sizes_metadata_and_is_idempotent() {
+        let input = r#"<figure class="alignleft"><img src="/a.jpg" alt="Keep alt" width="640" height="480" srcset="/a.jpg 640w" style="float:left"><figcaption>Keep caption</figcaption></figure><!--more--><img src="/b.jpg" width="200" height="100"><img src="/c.jpg">"#;
+        let clean = apply_article_image_defaults(input, BASE);
+        let doc = kuchiki::parse_html().one(clean.clone());
+        let images = doc.select("img").unwrap().collect::<Vec<_>>();
+        for (image, width, height) in [
+            (&images[0], "320", Some("240")),
+            (&images[1], "200", Some("100")),
+            (&images[2], "320", None),
+        ] {
+            let attrs = image.attributes.borrow();
+            assert_eq!(attrs.get("width"), Some(width));
+            assert_eq!(attrs.get("height"), height);
+            assert!(attrs.get("style").unwrap().contains("max-width: 100%"));
+            assert!(attrs.get("class").unwrap().contains("aligncenter"));
+        }
+        assert!(clean.contains("Keep alt"));
+        assert!(clean.contains("Keep caption"));
+        assert!(clean.contains("<!--more-->"));
+        assert!(!clean.contains("float"));
+        assert_eq!(apply_article_image_defaults(&clean, BASE), clean);
+        // Normal editing still accepts a deliberately chosen larger size.
+        assert!(sanitize(input, BASE).contains("width=\"640\""));
+        assert_eq!(
+            apply_article_image_defaults("<p>No image</p>", BASE),
+            "<p>No image</p>"
+        );
+    }
 
     #[test]
     fn more_markers_survive_sanitization_and_normalize_without_empty_paragraphs() {

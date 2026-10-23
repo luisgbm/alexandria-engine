@@ -72,6 +72,18 @@ enum Command {
         expected_active: String,
     },
     #[cfg(unix)]
+    /// Apply a one-time 320px image cap to articles, preserving private revisions.
+    NormalizeArticleImages {
+        #[arg(long)]
+        content: PathBuf,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    #[cfg(unix)]
     /// Activate an existing verified release from the root console.
     #[command(name = "rollback", alias = "rollback-staging")]
     RollbackStaging {
@@ -163,6 +175,18 @@ fn main() -> Result<()> {
             state,
             expected_active,
         } => alexandria_engine::admin::console_rebuild(&state, &expected_active)?,
+        #[cfg(unix)]
+        Command::NormalizeArticleImages {
+            content,
+            state,
+            expected_active,
+            dry_run,
+        } => alexandria_engine::admin::console_normalize_article_images(
+            &content,
+            &state,
+            &expected_active,
+            dry_run,
+        )?,
         #[cfg(unix)]
         Command::RollbackStaging {
             state,
