@@ -156,7 +156,7 @@ impl Publisher {
             .open(self.root.join("publish.lock"))?;
         ensure!(
             unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "another staging deployment is running"
+            "another deployment is running"
         );
         Ok(Lock(f))
     }
@@ -221,7 +221,7 @@ impl Publisher {
             "active release changed; refresh deployment history"
         );
         let id = format!(
-            "staging-{}-{}",
+            "release-{}-{}",
             Utc::now().format("%Y%m%dT%H%M%S"),
             &Uuid::new_v4().simple().to_string()[..12]
         );
@@ -506,20 +506,20 @@ pub fn console_publish(
     let doc = store.entries.get(id).context("draft not found")?;
     ensure!(doc.revision == revision, "saved revision changed");
     let active = p.deploy(content, doc, expected, "root-console")?;
-    println!("Activated staging release {active}");
+    println!("Activated release {active}");
     Ok(())
 }
 pub fn console_rollback(state: &Path, target: &str, expected: &str) -> Result<()> {
     console_identity(state)?;
     let p = Publisher::open(state)?.context("publisher not configured")?;
     p.rollback_to(target, expected, "root-console")?;
-    println!("Activated prior staging release {target}");
+    println!("Activated prior release {target}");
     Ok(())
 }
 fn configured(app: &App) -> ApiResult<Publisher> {
     app.publisher
         .clone()
-        .ok_or_else(|| bad("Publicação de staging não configurada."))
+        .ok_or_else(|| bad("Publicação não configurada."))
 }
 #[derive(Deserialize)]
 pub(super) struct PublishInput {

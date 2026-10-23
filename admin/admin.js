@@ -6,13 +6,15 @@
 
   let deployment = null, catalogRevision = "", selectedRevision = null;
 
-  let csrf = "", doc = null, entries = [], categories = [], featured = null, dirty = false, previewTimer, previewGeneration = 0, bootstrap = "";
+  let environment = "staging", environmentLabel = "Ambiente de testes";
+  let csrf = "", doc = null, entries = [], categories = [], dirty = false, previewTimer, previewGeneration = 0, bootstrap = "";
 
   const notice = (text, error = false) => {
     const status = $("notice");
     status.textContent = text;
     status.hidden = !text;
     status.classList.toggle("error", error);
+    const local=$("image-notice");if($("image-dialog").open){local.textContent=text;local.hidden=!text;local.classList.toggle("error",error);}
   };
 
   // Mutation success is authoritative; a later refresh failure must not suggest
@@ -125,22 +127,36 @@
 
   });
 
+  const pages = {"/":"statistics","/content/":"content","/images/":"images","/categories/":"categories","/publications/":"publications","/security/":"security"};
+  function identity(data) {
+    environment = data.environment; environmentLabel = data.environment_label;
+    $("environment-badge").textContent = environmentLabel;
+    $("publish").textContent = environment === "production" ? "Publicar" : "Publicar no staging";
+  }
+  async function showPage(path, push = false) {
+    const name = pages[path] || "statistics";
+    if(push) history.pushState(null,"",path);
+    for(const panel of document.querySelectorAll("[data-page]")) panel.hidden=panel.dataset.page!==name;
+    for(const link of document.querySelectorAll(".admin-nav a")) {if(link.pathname===path)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");}
+    document.title = `${document.querySelector('.admin-nav a[aria-current]')?.textContent || "Administração"} · Alexandria`;
+    if(name==="statistics")await loadAnalytics();
+    if(name==="content"){await loadCategories();await loadDeployments();await refreshEntries();}
+    if(name==="categories")await loadCategories();
+    if(name==="publications")await loadDeployments();
+    if(name==="images")await loadLibrary();
+    if(name==="security"){
+      const keys=await api("/api/credentials");$("key-list").replaceChildren();
+      $("key-count").textContent=`${keys.credentials.length} passkey(s) cadastrada(s)`;
+      $("key-hint").textContent=keys.credentials.length<2 ? "Cadastre uma segunda passkey antes de depender exclusivamente deste acesso." : "Mantenha duas alternativas de acesso e o material de recuperação offline.";
+      for(const key of keys.credentials){const li=document.createElement("li");li.textContent=key.name;$("key-list").append(li);}
+    }
+  }
+  document.addEventListener("click",event=>{const link=event.target.closest("a[data-nav]");if(!link || event.ctrlKey || event.metaKey || event.shiftKey || event.button!==0)return;event.preventDefault();showPage(link.pathname,true).catch(e=>notice(e.message,true));});
+  window.addEventListener("popstate",()=>{if(csrf)showPage(location.pathname).catch(e=>notice(e.message,true));});
   async function openApp() {
-
-    const session = await api("/api/session"); csrf=session.csrf;categories=session.site.categories;
-
+    const session = await api("/api/session"); csrf=session.csrf;categories=session.site.categories;identity(session);
     $("login").hidden=true;$("workspace").hidden=false;$("logout").hidden=false;
-
-    $("key-count").textContent=`${session.credentials} passkey(s) cadastrada(s)`;
-
-    $("key-hint").textContent=session.credentials<2 ? "Cadastre uma segunda passkey antes de depender exclusivamente deste acesso." : "Mantenha pelo menos duas alternativas de acesso e o material de recuperação offline.";
-
-    const keyData=await api("/api/credentials");$("key-list").replaceChildren();
-
-    for (const key of keyData.credentials) {const li=document.createElement("li");li.textContent=key.name;$("key-list").append(li);}
-
-    await loadCategories(); await loadDeployments(); await refreshEntries();await loadAnalytics();
-
+    await showPage(location.pathname);
   }
 
   let analyticsGeneration=0;
@@ -192,23 +208,23 @@
 
   function setDocument(data) {
 
-    doc=data;dirty=false;featured=data.metadata.featured_image;const m=data.metadata;$("tags").value=m.tags.join(", ");
+    doc=data;dirty=false;const m=data.metadata;$("tags").value=m.tags.join(", ");
 
-    $("editor").hidden=false;$("empty").hidden=true;$("title").value=m.title;$("html").value=data.html;$("permalink").value=m.permalink||"";
+    $("editor").hidden=false;$("empty").hidden=true;$("title").value=m.title;$("html").value=editableHtml(data);$("permalink").value=m.permalink||"";
 
     $("permalink").readOnly=data.permalink_locked||data.publication_status==="published";$("path-hint").textContent=$("permalink").readOnly ? "Este endereço já é público e será preservado." : "Escolha o endereço definitivo antes da publicação.";
 
-    $("published-local").value=m.original_published_local.replace(" ","T");$("image-alt").value=m.featured_image_alt||"";$("image-caption").value=m.featured_image_caption||"";
+    $("published-local").value=m.original_published_local.replace(" ","T");
 
     $("categories").replaceChildren();for(const cat of categories){const option=document.createElement("option");option.value=cat.slug;option.textContent=cat.name;option.selected=m.categories.includes(cat.slug);$("categories").append(option);}
 
     const generated=m.listings.length>0;$("publish").hidden=!deployment?.enabled;$("publish").disabled=data.trashed;$("html").readOnly=generated;$("save").disabled=data.trashed;$("entry-state").textContent=generated ? "Página com lista automática" : data.publication_status==="published" ? "Conteúdo publicado · edição em rascunho" : "Rascunho privado";
 
     for(const field of $("editor").querySelectorAll("input,textarea,select"))field.disabled=data.trashed;
-    $("insert-image").disabled=data.trashed;$("remove-image").disabled=data.trashed;
+
     $("trash-entry").textContent=data.trashed ? "Restaurar da lixeira" : "Mover para lixeira";
     $("trash-hint").textContent=data.trashed ? "Este conteúdo está na lixeira editorial. Uma versão já publicada continua disponível." : "Mover para a lixeira não apaga versões, imagens nem páginas publicadas.";
-    $("dirty").textContent="";refreshThumb();renderEntries();schedulePreview();loadRevisions(data.metadata.id).catch(e=>notice(e.message,true));
+    $("dirty").textContent="";renderEntries();schedulePreview();loadRevisions(data.metadata.id).catch(e=>notice(e.message,true));
 
   }
 
@@ -230,11 +246,11 @@
 
         if(dirty)throw new Error("Salve ou descarte as alterações antes de restaurar uma versão.");
 
-        if(!confirm(`Restaurar ${release.id} no staging? Os rascunhos serão mantidos.`))return;
+        if(!confirm(`Restaurar ${release.id} em ${environmentLabel}? Os rascunhos serão mantidos.`))return;
 
-        notice("Verificando e restaurando versão de staging…");await api("/api/rollback",{method:"POST",body:JSON.stringify({release:release.id,expected_active:deployment.active})});
+        notice(`Verificando e restaurando versão em ${environmentLabel}…`);await api("/api/rollback",{method:"POST",body:JSON.stringify({release:release.id,expected_active:deployment.active})});
 
-        await refreshAfterSuccess("Versão anterior restaurada no staging.", async()=>{await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);});
+        await refreshAfterSuccess(`Versão anterior restaurada em ${environmentLabel}.`, async()=>{await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);});
 
       });li.append(button);}$("release-list").append(li);
 
@@ -248,13 +264,13 @@
 
     if(!doc)return;if(doc.trashed)throw new Error("Restaure o conteúdo da lixeira antes de publicar.");if(dirty)throw new Error("Salve o rascunho antes de publicar.");
 
-    if(!confirm(`Publicar “${doc.metadata.title}” somente no staging?`))return;
+    if(!confirm(`Publicar “${doc.metadata.title}” em ${environmentLabel}?`))return;
 
     notice("Gerando e validando o site. A versão atual permanece disponível…");
 
     await api(`/api/publish/${encodeURIComponent(doc.metadata.id)}`,{method:"POST",body:JSON.stringify({revision:doc.revision,expected_active:deployment.active})});
 
-    await refreshAfterSuccess("Publicado no staging. O site original não foi alterado.", async()=>{await loadDeployments();await refreshEntries();await selectEntry(doc.metadata.id);});
+    await refreshAfterSuccess(`Publicado em ${environmentLabel}.`, async()=>{await loadDeployments();await refreshEntries();await selectEntry(doc.metadata.id);});
 
   });
 
@@ -288,7 +304,7 @@
     for(const category of categories){const li=document.createElement("li"),name=document.createElement("input"),rename=document.createElement("button"),remove=document.createElement("button"),info=document.createElement("small");
       name.value=category.name;name.maxLength=100;name.setAttribute("aria-label",`Nome da categoria ${category.slug}`);info.textContent=` /category/${category.slug}/ · ${category.entries} conteúdo(s) `;
       rename.type=remove.type="button";rename.textContent="Renomear";remove.textContent="Excluir";rename.className=remove.className="quiet";
-      rename.onclick=()=>busy(rename,async()=>{await api(`/api/categories/${encodeURIComponent(category.slug)}`,{method:"PUT",body:JSON.stringify({revision:catalogRevision,name:name.value})});await loadCategories();if(doc&&!dirty)setDocument(await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`));notice("Categoria renomeada no catálogo editorial. Publique um conteúdo para atualizar o staging.");});
+      rename.onclick=()=>busy(rename,async()=>{await api(`/api/categories/${encodeURIComponent(category.slug)}`,{method:"PUT",body:JSON.stringify({revision:catalogRevision,name:name.value})});await loadCategories();if(doc&&!dirty)setDocument(await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`));notice("Categoria renomeada no catálogo editorial. Publique um conteúdo para atualizar o site deste ambiente.");});
       remove.onclick=()=>busy(remove,async()=>{if(!confirm(`Excluir a categoria “${category.name}” se estiver sem uso?`))return;await api(`/api/categories/${encodeURIComponent(category.slug)}`,{method:"DELETE",body:JSON.stringify({revision:catalogRevision})});await loadCategories();notice("Categoria sem uso excluída.");});
       const up=document.createElement("button"),down=document.createElement("button");up.type=down.type="button";up.textContent="↑";down.textContent="↓";up.setAttribute("aria-label",`Subir ${category.name}`);down.setAttribute("aria-label",`Descer ${category.name}`);
       for(const [button,delta] of [[up,-1],[down,1]]){const index=categories.indexOf(category);button.disabled=index+delta<0||index+delta>=categories.length;button.onclick=()=>busy(button,async()=>{const slugs=categories.map(c=>c.slug);[slugs[index],slugs[index+delta]]=[slugs[index+delta],slugs[index]];await api("/api/categories/order",{method:"POST",body:JSON.stringify({revision:catalogRevision,slugs})});await loadCategories();notice("Ordem das categorias salva.");});}
@@ -300,21 +316,46 @@
 
   function edit() {if(!doc)return;dirty=true;$("dirty").textContent="Alterações não salvas";schedulePreview();}
 
-  for(const id of ["title","html","permalink","published-local","image-alt","image-caption","categories","tags"])$(id).addEventListener("input",edit);
+  for(const id of ["title","html","permalink","published-local","categories","tags"])$(id).addEventListener("input",edit);
 
-  function fields() {return {tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:featured,featured_image_alt:$("image-alt").value,featured_image_caption:$("image-caption").value};}
+  function fields() {return {tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:null,featured_image_alt:"",featured_image_caption:""};}
 
   $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshAfterSuccess("Rascunho salvo. O site não foi alterado.",refreshEntries);});};
 
-  function refreshThumb() {$("featured-thumb").hidden=!featured;if(featured)$("featured-thumb").src="/api/media"+featured;else $("featured-thumb").removeAttribute("src");}
-
-  $("file").onchange=async()=>{const file=$("file").files[0];if(!file)return;try{if(file.size>8*1024*1024)throw new Error("Escolha uma imagem de até 8 MB.");notice("Enviando e verificando imagem…");const form=new FormData();form.append("image",file);const result=await api("/api/uploads",{method:"POST",body:form});featured=result.path;refreshThumb();edit();notice("Imagem enviada. Inclua uma descrição e uma legenda.");}catch(error){notice(error.message,true);}finally{$("file").value="";}};
-
-  $("remove-image").onclick=()=>{featured=null;refreshThumb();edit();};
-
   const escape = value => value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-
-  $("insert-image").onclick=()=>{if(!featured){notice("Escolha uma imagem primeiro.",true);return;}const html=`\n<figure><img src="${escape(featured)}" alt="${escape($("image-alt").value)}"><figcaption>${escape($("image-caption").value)}</figcaption></figure>\n`;const field=$("html");field.setRangeText(html,field.selectionStart,field.selectionEnd,"end");edit();};
+  function editableHtml(data){
+    const m=data.metadata, wrapper=new DOMParser().parseFromString(data.html,"text/html");
+    // Preserve old featured images as explicit HTML, without inserting duplicates.
+    if(m.featured_image && ![...wrapper.querySelectorAll("img")].some(i=>i.getAttribute("src")===m.featured_image)){
+      return `<figure><img src="${escape(m.featured_image)}" alt="${escape(m.featured_image_alt||"")}"><figcaption>${escape(m.featured_image_caption||"")}</figcaption></figure>\n${data.html}`;
+    }
+    return data.html;
+  }
+  let libraryRevision="", imageOffset=0, libraryImages=[], selectedImage=null, imageGeneration=0, searchTimer;
+  function imageCode(){return `<figure><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
+  async function loadLibrary(){
+    const generation=++imageGeneration;$("image-grid").replaceChildren();$("image-count").textContent="Carregando imagens…";$("images-prev").disabled=$("images-next").disabled=true;
+    const query=new URLSearchParams({q:$("image-search").value,offset:String(imageOffset),deleted:String($("image-filter").value==="deleted")});
+    const data=await api(`/api/library?${query}`);if(generation!==imageGeneration)return;
+    libraryRevision=data.revision;libraryImages=data.images;$("image-grid").replaceChildren();
+    $("image-count").textContent=`${data.total} imagem(ns) · ${data.total ? imageOffset+1 : 0}–${Math.min(imageOffset+data.images.length,data.total)}`;
+    $("images-prev").disabled=imageOffset===0;$("images-next").disabled=imageOffset+data.limit>=data.total;
+    for(const image of data.images){const button=document.createElement("button"),img=document.createElement("img"),label=document.createElement("span");button.type="button";button.className="image-card";img.src="/api/media"+image.path;img.alt=image.alt;img.loading="lazy";label.textContent=image.name||decodeURIComponent(image.path.split("/").pop());button.append(img,label);button.onclick=()=>selectImage(image);$("image-grid").append(button);}
+  }
+  function selectImage(image){delete $("remove-image").dataset.confirmPath;$("image-notice").hidden=true;selectedImage=image;$("library-preview").src="/api/media"+image.path;$("library-preview").alt=image.alt;$("image-path").value=image.path;$("image-alt").value=image.alt;$("image-caption").value=image.caption;$("image-code").value=imageCode();$("remove-image").textContent=image.deleted ? "Restaurar na biblioteca" : "Excluir da biblioteca";$("insert-image").disabled=!doc || doc.trashed || $("html").readOnly || image.deleted;$("image-dialog").showModal();}
+  $("close-image").onclick=()=>$("image-dialog").close();
+  for(const id of ["image-alt","image-caption"])$(id).oninput=()=>{$("image-code").value=imageCode();};
+  async function copyImage(value){if(!navigator.clipboard){notice("Selecione e copie o campo acima.");return;}await navigator.clipboard.writeText(value);notice("Copiado.");}
+  $("copy-image-link").onclick=()=>busy($("copy-image-link"),()=>copyImage($("image-path").value));
+  $("copy-image-html").onclick=()=>busy($("copy-image-html"),()=>copyImage(imageCode()));
+  $("image-form").onsubmit=event=>{event.preventDefault();busy($("save-image"),async()=>{await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Imagem salva na biblioteca.",loadLibrary);});};
+  $("remove-image").onclick=()=>busy($("remove-image"),async()=>{if(!selectedImage.deleted && $("remove-image").dataset.confirmPath!==selectedImage.path){$("remove-image").dataset.confirmPath=selectedImage.path;$("remove-image").textContent="Confirmar exclusão da biblioteca";notice("Clique novamente para excluir da biblioteca. Os arquivos usados em artigos e versões anteriores serão preservados.");return;}await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:!selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Biblioteca atualizada.",loadLibrary);});
+  $("insert-image").onclick=()=>{if(!doc||doc.trashed||$("html").readOnly)return;const code="\n"+imageCode()+"\n";const field=$("html");field.setRangeText(code,field.selectionStart,field.selectionEnd,"end");edit();$("image-dialog").close();showPage("/content/",true).catch(e=>notice(e.message,true));notice("Imagem inserida no HTML. Salve o rascunho para manter a alteração.");};
+  $("image-search").oninput=()=>{clearTimeout(searchTimer);imageOffset=0;searchTimer=setTimeout(()=>loadLibrary().catch(e=>notice(e.message,true)),300);};
+  $("image-filter").onchange=()=>{imageOffset=0;loadLibrary().catch(e=>notice(e.message,true));};
+  $("images-prev").onclick=()=>{imageOffset=Math.max(0,imageOffset-48);loadLibrary().catch(e=>notice(e.message,true));};
+  $("images-next").onclick=()=>{imageOffset+=48;loadLibrary().catch(e=>notice(e.message,true));};
+  $("file").onchange=async()=>{const file=$("file").files[0];if(!file)return;$("file").disabled=true;try{if(file.size>8*1024*1024)throw new Error("Escolha uma imagem de até 8 MB.");notice("Enviando e verificando imagem…");const form=new FormData();form.append("image",file);const result=await api("/api/uploads",{method:"POST",body:form});imageOffset=0;$("image-filter").value="active";$("image-search").value="";await loadLibrary();const image=libraryImages.find(i=>i.path===result.path)||{path:result.path,alt:"",caption:"",deleted:false};selectImage(image);notice("Imagem enviada à biblioteca. Edite a descrição e a legenda.");}catch(error){notice(error.message,true);}finally{$("file").value="";$("file").disabled=false;}};
 
   function schedulePreview() {clearTimeout(previewTimer);previewTimer=setTimeout(renderPreview,650);}
 
@@ -328,6 +369,6 @@
 
   window.addEventListener("beforeunload",event=>{if(dirty){event.preventDefault();event.returnValue="";}});
 
-  (async()=>{const fragment=new URLSearchParams(location.hash.slice(1));bootstrap=fragment.get("setup")||"";if(location.hash)history.replaceState(null,"",location.pathname);const status=await api("/api/status");$("setup").hidden=status.initialized;$("signin").hidden=!status.initialized;if(bootstrap)$("bootstrap").value=bootstrap;try{await openApp();}catch(_){loginView();if(!status.initialized)notice("Cadastre sua primeira passkey para abrir o ambiente editorial.");else notice("");}})().catch(error=>notice(error.message,true));
+  (async()=>{const fragment=new URLSearchParams(location.hash.slice(1));bootstrap=fragment.get("setup")||"";if(location.hash)history.replaceState(null,"",location.pathname);const status=await api("/api/status");identity(status);$("setup").hidden=status.initialized;$("signin").hidden=!status.initialized;if(bootstrap)$("bootstrap").value=bootstrap;try{await openApp();}catch(_){loginView();if(!status.initialized)notice("Cadastre sua primeira passkey para abrir o ambiente editorial.");else notice("");}})().catch(error=>notice(error.message,true));
 
 })();

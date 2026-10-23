@@ -185,6 +185,45 @@ fn broken_new_media_prevents_release_completion() {
 }
 
 #[test]
+fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, rendered, inventory) = fixture(root);
+    let content = root.join("content");
+    import::run(&archive, &rendered, &inventory, &content).unwrap();
+    let entry = load_entries(&content)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.metadata.status == "published")
+        .unwrap();
+    for i in 0..12 {
+        let mut metadata = entry.metadata.clone();
+        metadata.id = format!("preview-{i}");
+        metadata.wordpress_id = String::new();
+        metadata.title = format!("Preview {i}");
+        metadata.permalink = Some(format!("/preview-{i}/"));
+        metadata.legacy_urls.clear();
+        metadata.published_at = Some(format!("2026-10-21T{i:02}:00:00-03:00"));
+        let folder = content.join("articles").join(&metadata.id);
+        write_json(&folder.join("metadata.json"), &metadata).unwrap();
+        fs::write(
+            folder.join("body.html"),
+            format!("<p>Excerpt number {i} with &lt;escaped&gt; text.</p>"),
+        )
+        .unwrap();
+    }
+    let release = root.join("release");
+    build::run(&content, &release).unwrap();
+    let home = fs::read_to_string(release.join("public/index.html")).unwrap();
+    assert_eq!(home.matches("class=\"article-preview\"").count(), 10);
+    assert!(home.contains("Excerpt number 11 with &lt;escaped&gt; text."));
+    assert!(!home.contains("PRIVATE BODY"));
+    assert!(!home.contains("SECRET DRAFT"));
+    assert!(home.contains("/page/2/"));
+    assert!(release.join("public/page/2/index.html").exists());
+}
+
+#[test]
 fn regenerates_category_lists_and_rejects_invalid_metadata_schema() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
