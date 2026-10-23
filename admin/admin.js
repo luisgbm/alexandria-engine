@@ -8,7 +8,12 @@
 
   let csrf = "", doc = null, entries = [], categories = [], featured = null, dirty = false, previewTimer, previewGeneration = 0, bootstrap = "";
 
-  const notice = (text, error = false) => { $("notice").textContent = text; $("notice").classList.toggle("error", error); };
+  const notice = (text, error = false) => {
+    const local = $("editor-notice"), editing = !$("workspace").hidden && !$("editor").hidden;
+    $("notice").textContent = text; $("notice").classList.toggle("error", error);
+    $("notice").setAttribute("aria-live", editing ? "off" : "polite");
+    local.hidden = !editing || !text; local.textContent = editing ? text : ""; local.classList.toggle("error", error);
+  };
 
   function loginView() { $("workspace").hidden = true; $("logout").hidden = true; $("login").hidden = false; }
 
@@ -32,7 +37,7 @@
 
   }
 
-  function busy(button, action) { button.disabled = true; return Promise.resolve().then(action).catch(error => notice(error.name === "NotAllowedError" ? "Operação cancelada ou passkey indisponível. Você pode tentar novamente." : error.message, true)).finally(() => { button.disabled = false; }); }
+  function busy(button, action) { const label = button.textContent; button.disabled = true; if(button.id === "save")button.textContent = "Salvando…"; return Promise.resolve().then(action).catch(error => notice(error.name === "NotAllowedError" ? "Operação cancelada ou passkey indisponível. Você pode tentar novamente." : error.message, true)).finally(() => { button.disabled = false; if(button.id === "save")button.textContent = label; }); }
 
   function decode(value) { const raw = atob(value.replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(raw, c => c.charCodeAt(0)); }
 
@@ -179,6 +184,7 @@
 
   function setDocument(data) {
 
+    if(doc?.metadata.id !== data.metadata.id){$("editor-notice").hidden=true;$("editor-notice").textContent="";}
     doc=data;dirty=false;featured=data.metadata.featured_image;const m=data.metadata;$("tags").value=m.tags.join(", ");
 
     $("editor").hidden=false;$("empty").hidden=true;$("title").value=m.title;$("html").value=data.html;$("permalink").value=m.permalink||"";
@@ -291,7 +297,7 @@
 
   function fields() {return {tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:featured,featured_image_alt:$("image-alt").value,featured_image_caption:$("image-caption").value};}
 
-  $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshEntries();notice("Rascunho salvo. O site não foi alterado.");});};
+  $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshEntries();notice("Rascunho salvo. O site não foi alterado.");});};
 
   function refreshThumb() {$("featured-thumb").hidden=!featured;if(featured)$("featured-thumb").src="/api/media"+featured;else $("featured-thumb").removeAttribute("src");}
 
