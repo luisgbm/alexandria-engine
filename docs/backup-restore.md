@@ -8,14 +8,16 @@ uploaded to Azure.
 ## Destination and schedule
 
 - PC: `C:\Users\luisg\Backups\culturaespiritual\alexandria-automated`.
-- Verified repository: `current\repository`; preceding verified copy: `previous\repository`.
+- Verified repository: `current\repository` (one persistent local repository).
 - Recovery password: `C:\Users\luisg\Backups\culturaespiritual\alexandria-backup-recovery\password`.
 - These directories have restricted Windows ACLs. Neither contents nor credentials belong in Git.
-- Server preparation: `alexandria-backup.timer`, daily 05:00 UTC (02:00 Brasília),
+- Server preparation: `alexandria-backup.timer`, the first day of each month at 05:00 UTC (02:00 Brasília),
   with up to 15 minutes of jitter and catch-up after downtime.
-- Windows task: `Alexandria Encrypted Off-server Backup`, daily 02:30 local time
-  and at user logon. It requests a fresh server snapshot, downloads the encrypted
-  repository through `ssh alexandria`, then runs a complete data check locally.
+- Windows task: `Alexandria Encrypted Off-server Backup`, the first day of each month at 02:30 local time,
+  plus a catch-up check at user logon. It skips a month already successfully copied.
+  Otherwise it reuses this month's prepared server snapshot (or creates one if
+  missing), synchronizes changed encrypted files through `ssh alexandria`, and
+  runs a complete data check locally.
 - The task runs as the current user without storing a Windows password. It
   requires that user to be logged in and the PC to have network access. It requests
   wake-up, catches up when available, and retries failures three times at 15-minute
@@ -23,14 +25,19 @@ uploaded to Azure.
 
 Restic 0.16.4 encrypts and authenticates repository data before it leaves the
 server. The Windows executable is checked against the official release SHA-256
-list. Transfers currently download the entire compressed encrypted repository,
-rather than synchronizing individual packs. Retention keeps 7 daily, 5 weekly
-and 12 monthly snapshots (overlapping periods need not create distinct copies).
-Retention is applied only after a successful server backup. The PC preserves the
-previous verified repository until the incoming repository passes `check --read-data`.
-Repositories and the current/previous copies share the PC's physical disk; they
-do not protect against loss of that disk. Keep a copy of the recovery password in
-your password manager or offline storage separate from the backup disk.
+list. Transfers compare SHA-256 hashes and download only missing or changed
+repository files. Retention keeps 12 monthly restore points, applied after a
+successful server backup. Already stored content is deduplicated between snapshots.
+The PC stages an update using a temporary local copy, applies the encrypted delta,
+checks its exact file hashes, and runs `check --read-data` before replacing the
+verified repository. The previous directory is removed after successful promotion;
+interrupted swaps recover it on the next run. Normal operation retains one
+repository, with a temporary second local copy during verification.
+
+This repository does not protect against loss of the PC's disk. Keep a copy of
+the recovery password in your password manager or offline storage separate from
+that disk. `-Force` on the PC script bypasses the monthly skip for a resync/check;
+it reuses the month's prepared server snapshot.
 
 ## Consistent capture
 
@@ -56,6 +63,8 @@ server applications, operating-system disks, SSH host/private keys and account
 password files are outside this application backup. Source is separately versioned
 in GitHub. The server's preparation repository and export archives are local
 working copies; only a successful PC transfer provides off-server protection.
+Only one small encrypted delta export is retained and replaced on demand. The
+plaintext snapshot staging directory is removed after a successful server backup.
 
 ## Operation and failure evidence
 
@@ -66,7 +75,8 @@ Start-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup'
 Get-ScheduledTaskInfo -TaskName 'Alexandria Encrypted Off-server Backup'
 ```
 
-`LastTaskResult = 0` confirms the last task completed. The backup directory contains
+`LastTaskResult = 0` confirms the last task completed (including an already-backed-up
+month being skipped). Check `last-success.json` for the last actual verified copy. The backup directory contains
 `last-success.json`, timestamped transcripts, and `last-failure.json` when a failure
 occurred. Compare timestamps: an older failure file is historical. There is no
 email or external monitoring notification configured.
@@ -81,7 +91,7 @@ journalctl -u alexandria-backup.service -n 30 --no-pager
 
 The implementation is in `ops/backup-staging.py`,
 `ops/install-backup-staging.sh`, `scripts/backup-to-local-pc.ps1`,
-`scripts/install-local-backup-task.ps1` and
+`scripts/install-local-backup-task.ps1`, `ops/prepare-backup-delta.py` and
 `ops/restore-drill-staging.py`. Installation initializes a new repository and
 must not be rerun against an existing repository.
 
@@ -131,9 +141,11 @@ release must remain unchanged. This is an application
 restore rehearsal using the existing host's OS and account definitions, not a
 fresh-VM provisioning or interactive passkey-sign-in rehearsal.
 
-Reports remain private beneath `/var/lib/alexandria-restore-drill-*/report.json`;
-the encrypted PC copy and recovery password remain the recovery source. Restore
-directories contain plaintext credentials/content and must remain root-private.
+New drill reports are private beneath `/var/lib/alexandria-restore-drill-*/report.json`.
+After review, preserve the report separately and remove the extracted temporary
+repositories, returned archive and plaintext restore tree. The encrypted PC copy
+and recovery password remain the recovery source. Restore directories must remain
+root-private until removed.
 
 ## Completed validation — 2026-10-23
 
@@ -146,10 +158,25 @@ No synthetic credential was added. The active live release remained
 `staging-20261022T225033-d7d27da8ff2a`.
 
 The final private server report is
-`/var/lib/alexandria-restore-drill-h8f5ndkn/report.json`; a copy is saved as
+`/var/lib/alexandria-backup/restore-drill-report-20261023.json`; a copy is saved as
 `restore-drill-report-20261023.json` in the PC backup directory. The Windows task
 completed another successful transfer and full data check at 06:07 Brasília with
 `LastTaskResult = 0`. An earlier interrupted overnight run led to adding SSH
 keep-alives, bounded connection waits and phase logging. All 11 live staging
 publishing smoke checks also passed after the drill. No Azure storage account
 remains from the abandoned destination setup.
+
+## Monthly switch — 2026-10-23
+
+Daily/weekly retention and full repository transfers were replaced with the
+monthly policy above. Both next scheduled runs are November 1 (02:00 plus jitter
+on the server, 02:30 on the PC). The first delta sync transferred four changed
+files in a 6,205,440-byte archive instead of the approximately 289 MiB repository.
+A repeat against the same prepared snapshot transferred zero repository files
+(10,240-byte tar header only). Both passed exact-repository/full Restic data checks.
+The scheduled catch-up check also returned zero without another backup this month.
+
+Old full export archives, the PC's duplicate previous repository, the returned
+restore-test archive and extracted server restore/repository/staging copies were
+removed. Validation reports, recovery material and the original WordPress backup
+were preserved. The live staging release was unchanged.

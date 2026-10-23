@@ -13,5 +13,9 @@ $backupPrincipal = New-ScheduledTaskPrincipal -UserId $backupUser -LogonType Int
 Register-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup' -Action $backupAction `
     -Trigger $backupTriggers -Settings $backupSettings -Principal $backupPrincipal `
     -Description 'Pull and fully verify encrypted Alexandria staging backups on this PC. Requires the user session and SSH key.' -Force
+$backupXml = Export-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup'
+$backupMonths = '<ScheduleByMonth><DaysOfMonth><Day>1</Day></DaysOfMonth><Months><January/><February/><March/><April/><May/><June/><July/><August/><September/><October/><November/><December/></Months></ScheduleByMonth>'
+$backupXml = [regex]::Replace($backupXml, '(?s)<ScheduleByDay>.*?</ScheduleByDay>', $backupMonths)
+Register-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup' -Xml $backupXml -Force | Out-Null
 Export-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup' |
     Set-Content -LiteralPath (Join-Path $BackupRoot 'scheduled-task.xml') -Encoding Unicode

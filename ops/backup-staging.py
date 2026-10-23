@@ -7,10 +7,8 @@ import json
 import os
 from pathlib import Path
 import shutil
-import grp
 import sqlite3
 import subprocess
-import time
 import sys
 
 BASE = Path('/var/cache/alexandria-backup')
@@ -121,27 +119,14 @@ def main():
             'alexandria-staging', str(SNAPSHOT))
         # Prune only this dedicated repository/host/tag after a successful backup.
         run('restic', 'forget', '--host', 'alexandria-staging', '--tag',
-            'alexandria-staging', '--keep-daily', '7', '--keep-weekly', '5',
-            '--keep-monthly', '12', '--prune')
+            'alexandria-staging', '--keep-monthly', '12', '--prune')
         run('restic', 'check')
         Path('/var/lib/alexandria-backup').mkdir(mode=0o711, exist_ok=True)
-        exports = Path('/var/lib/alexandria-backup/exports')
-        exports.mkdir(mode=0o750, exist_ok=True)
-        os.chmod(exports, 0o750)
-        os.chown(exports, 0, grp.getgrnam('luisg').gr_gid)
-        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        archive = exports / (stamp + '.tar')
-        run('tar', '-cf', str(archive), '-C', '/var/lib/alexandria-backup', 'repository')
-        os.chown(archive, 0, grp.getgrnam('luisg').gr_gid)
-        os.chmod(archive, 0o640)
-        Path('/var/lib/alexandria-backup/latest-export').write_text(str(archive) + '\n')
-        os.chmod('/var/lib/alexandria-backup/latest-export', 0o644)
-        for old in exports.glob('*.tar'):
-            if old != archive and old.stat().st_mtime < time.time() - 7 * 86400:
-                old.unlink()
         Path('/var/lib/alexandria-backup/last-success.json').write_text(json.dumps({
             'completed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }) + '\n')
+        # The encrypted repository is now complete; do not retain a plaintext duplicate.
+        shutil.rmtree(SNAPSHOT)
         print('Encrypted staging repository checked and ready for off-server pull')
 
 

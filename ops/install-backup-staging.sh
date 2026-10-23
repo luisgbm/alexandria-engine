@@ -14,6 +14,7 @@ install -d -m 0711 /var/lib/alexandria-backup
 install -m 0700 "$(dirname "$0")/backup-staging.py" /usr/local/lib/alexandria-backup/backup-staging.py
 install -m 0700 "$(dirname "$0")/restore-drill-staging.py" /usr/local/lib/alexandria-backup/restore-drill-staging.py
 install -m 0700 "$(dirname "$0")/run-pc-restore-drill.sh" /usr/local/lib/alexandria-backup/run-pc-restore-drill.sh
+install -m 0700 "$(dirname "$0")/prepare-backup-delta.py" /usr/local/lib/alexandria-backup/prepare-backup-delta.py
 cat > /etc/systemd/system/alexandria-backup.service <<'UNIT'
 [Unit]
 Description=Encrypted off-server Alexandria staging backup
@@ -38,9 +39,9 @@ ReadWritePaths=/etc/alexandria-backup
 UNIT
 cat > /etc/systemd/system/alexandria-backup.timer <<'UNIT'
 [Unit]
-Description=Daily encrypted Alexandria staging backup
+Description=Monthly encrypted Alexandria staging backup
 [Timer]
-OnCalendar=*-*-* 05:00:00 UTC
+OnCalendar=*-*-01 05:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=true
 [Install]
