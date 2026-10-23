@@ -62,7 +62,10 @@ launch. Trash deliberately does not remove already published content.
 
 ## Launch gates, in order
 
-1. **Prepare a clean production content set.** The active baseline includes
+1. **Clean candidate prepared — final delta still pending.** See
+   [production content](production-content.md): a separate inactive candidate now
+   excludes all four known test documents and three test images, with a successful
+   449-item build. The staging baseline itself remains intact. The active baseline includes
    `art-219278af799b4f45a90780f0e59e393c`, “Validação de staging — edição e imagens”,
    at `/artigos/validacao-staging-20261022/`: 449 imported items plus this test
    article make 450. Exclude synthetic articles, pages and associated unused test
