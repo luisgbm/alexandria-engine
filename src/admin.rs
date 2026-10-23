@@ -716,6 +716,7 @@ fn router(app: Shared) -> Router {
         .route("/api/auth/login/finish", post(login_finish))
         .route("/api/logout", post(logout))
         .route("/api/credentials", get(credentials))
+        .route("/api/credentials/{id}/remove", post(remove_credential))
         .route("/api/articles", get(list_entries).post(create_entry))
         .route(
             "/api/trash",
@@ -993,16 +994,82 @@ async fn credentials(
     app.session(&headers, false)?;
     let db = app.db.lock().unwrap();
     let mut stmt = db
-        .prepare("SELECT name,created_at FROM credentials ORDER BY created_at")
+        .prepare("SELECT id,name,created_at FROM credentials ORDER BY created_at,id")
         .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
     let keys = stmt
         .query_map([], |r| {
-            Ok(serde_json::json!({"name":r.get::<_,String>(0)?,"created_at":r.get::<_,i64>(1)?}))
+            Ok(serde_json::json!({"id":digest(&r.get::<_,String>(0)?),"name":r.get::<_,String>(1)?,"created_at":r.get::<_,i64>(2)?}))
         })
         .map_err(|e| ApiError::from(anyhow::Error::from(e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
     Ok(Json(serde_json::json!({"credentials":keys})))
+}
+
+#[derive(Deserialize)]
+struct RemoveCredential {
+    confirmation: String,
+}
+async fn remove_credential(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    RoutePath(handle): RoutePath<String>,
+    Json(input): Json<RemoveCredential>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let session = app.session(&headers, true)?;
+    if now() - session.auth_at > 300 {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "Entre novamente antes de remover uma passkey (autenticação válida por cinco minutos)."
+                .into(),
+        ));
+    }
+    if input.confirmation != "REMOVER PASSKEY" {
+        return Err(bad("Confirme a remoção da passkey."));
+    }
+    let remaining = {
+        let mut db = app.db.lock().unwrap();
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+        let ids = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM credentials")
+                .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| ApiError::from(anyhow::Error::from(e)))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| ApiError::from(anyhow::Error::from(e)))?
+        };
+        let id = ids.iter().find(|id| digest(id) == handle).ok_or_else(|| {
+            ApiError(
+                StatusCode::NOT_FOUND,
+                "Esta passkey já foi removida. Atualize a lista.".into(),
+            )
+        })?;
+        if ids.len() <= 1 {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "Não é possível remover a última passkey. Cadastre outra primeiro.".into(),
+            ));
+        }
+        tx.execute("DELETE FROM credentials WHERE id=?1", [id])
+            .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+        // Sessions predate credential tracking: invalidate other sessions so a lost
+        // key cannot retain an old login. The requesting administrator stays signed in.
+        tx.execute("DELETE FROM sessions WHERE token_hash<>?1", [&session.hash])
+            .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+        audit(&tx, "passkey_removed", &handle)?;
+        tx.commit()
+            .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+        ids.len() - 1
+    };
+    app.flows.lock().unwrap().clear();
+    app.previews
+        .lock()
+        .unwrap()
+        .retain(|_, c| c.session_hash == session.hash);
+    Ok(Json(serde_json::json!({"ok":true,"remaining":remaining})))
 }
 
 async fn list_entries(

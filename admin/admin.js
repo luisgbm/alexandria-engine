@@ -154,13 +154,36 @@
     if(name==="publications")await loadDeployments();
     if(name==="images")await loadLibrary();
     if(name==="appearance"){await loadDeployments();if(!sidebarDirty)await loadHomepage();}
-    if(name==="security"){
-      const keys=await api("/api/credentials");$("key-list").replaceChildren();
-      $("key-count").textContent=`${keys.credentials.length} passkey(s) cadastrada(s)`;
-      $("key-hint").textContent=keys.credentials.length<2 ? "Cadastre uma segunda passkey antes de depender exclusivamente deste acesso." : "Mantenha duas alternativas de acesso e o material de recuperação offline.";
-      for(const key of keys.credentials){const li=document.createElement("li");li.textContent=key.name;$("key-list").append(li);}
+    if(name==="security")await loadPasskeys();
+  }
+  let keyToRemove = null;
+  async function loadPasskeys() {
+    const keys=await api("/api/credentials");$("key-list").replaceChildren();
+    const last=keys.credentials.length<2;
+    $("key-count").textContent=`${keys.credentials.length} passkey(s) cadastrada(s)`;
+    $("key-hint").textContent=last ? "A última passkey não pode ser removida. Cadastre outra primeiro." : "Mantenha duas alternativas de acesso e o material de recuperação offline.";
+    for(const key of keys.credentials){
+      const li=document.createElement("li"),label=document.createElement("span"),button=document.createElement("button");
+      label.textContent=`${key.name} · ${new Date(key.created_at*1000).toLocaleString("pt-BR")}`;
+      button.type="button";button.className="quiet";button.textContent="Remover passkey";button.disabled=last;
+      button.setAttribute("aria-label",`Remover passkey: ${key.name}`);
+      if(last)button.title="Cadastre outra passkey antes de remover esta.";
+      button.onclick=()=>{keyToRemove=key;$("remove-key-name").textContent=key.name;$("remove-key-status").textContent="";$("confirm-remove-key").disabled=false;$("remove-key-dialog").showModal();};
+      li.append(label,button);$("key-list").append(li);
     }
   }
+  $("cancel-remove-key").onclick=()=>$("remove-key-dialog").close();
+  $("remove-key-dialog").addEventListener("close",()=>{keyToRemove=null;});
+  $("remove-key-form").onsubmit=async event=>{
+    event.preventDefault();if(!keyToRemove)return;
+    const button=$("confirm-remove-key");button.disabled=true;$("cancel-remove-key").disabled=true;$("remove-key-status").textContent="Removendo passkey…";
+    try {
+      await api(`/api/credentials/${encodeURIComponent(keyToRemove.id)}/remove`,{method:"POST",body:JSON.stringify({confirmation:"REMOVER PASSKEY"})});
+      $("remove-key-dialog").close();
+      await refreshAfterSuccess("Passkey removida. Outras sessões foram encerradas. Remova também a cópia do seu gerenciador de senhas, se desejar.",loadPasskeys);
+    } catch(error) { $("remove-key-status").textContent=error.message; }
+    finally { button.disabled=false;$("cancel-remove-key").disabled=false; }
+  };
   document.addEventListener("click",event=>{const link=event.target.closest("a[data-nav]");if(!link || event.ctrlKey || event.metaKey || event.shiftKey || event.button!==0)return;event.preventDefault();showPage(link.pathname,true).catch(e=>notice(e.message,true));});
   window.addEventListener("popstate",()=>{if(csrf)showPage(location.pathname).catch(e=>notice(e.message,true));});
   async function openApp() {
