@@ -99,23 +99,6 @@ pub(super) async fn empty_trash(
     ))
 }
 
-pub(super) fn validate_tags(tags: Vec<String>) -> ApiResult<Vec<String>> {
-    if tags.len() > 30
-        || tags
-            .iter()
-            .any(|t| t.trim().is_empty() || t.chars().count() > 80)
-    {
-        return Err(bad("Use até 30 etiquetas, com 1 a 80 caracteres cada."));
-    }
-    let mut clean = Vec::new();
-    for tag in tags {
-        let tag = tag.trim().to_string();
-        if !clean.contains(&tag) {
-            clean.push(tag);
-        }
-    }
-    Ok(clean)
-}
 fn current(store: &Store, id: &str) -> ApiResult<Document> {
     validate_id(id).map_err(|_| bad("Identificador inválido."))?;
     store

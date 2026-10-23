@@ -96,7 +96,7 @@ pub fn normalize_more(input: &str) -> String {
 }
 
 /// One-time editorial cleanup, not a rendering policy: future custom widths stay valid.
-pub fn apply_article_image_defaults(input: &str, base: &str) -> String {
+pub fn apply_article_image_defaults(input: &str, base: &str, original: Option<&str>) -> String {
     let clean = sanitize(input, base);
     let doc = kuchiki::parse_html().one(format!("<body>{clean}</body>"));
     let images = doc.select("img").unwrap().collect::<Vec<_>>();
@@ -129,13 +129,51 @@ pub fn apply_article_image_defaults(input: &str, base: &str) -> String {
             .collect::<Vec<_>>()
             .join("; ")
     }
+    let original_doc = original.map(|body| kuchiki::parse_html().one(sanitize(body, base)));
+    let original_images = original_doc.as_ref().map(|doc| {
+        doc.select("img")
+            .unwrap()
+            .map(|img| img.attributes.borrow().clone())
+            .collect::<Vec<_>>()
+    });
     for image in images {
         let mut attrs = image.attributes.borrow_mut();
+        // Upgrade only images carrying the earlier cleanup's 320px default.
+        // Use original dimensions where available, without replacing current prose/metadata.
+        if original.is_some()
+            && attrs.get("width") == Some("320")
+            && attrs
+                .get("class")
+                .unwrap_or("")
+                .split_whitespace()
+                .any(|c| c == "aligncenter")
+            && attrs.get("style").unwrap_or("").contains("max-width: 100%")
+        {
+            let prior = original_images.as_ref().and_then(|images| {
+                images
+                    .iter()
+                    .find(|image| image.get("src") == attrs.get("src"))
+            });
+            if let Some(prior) = prior {
+                for key in ["width", "height"] {
+                    if let Some(value) = prior.get(key) {
+                        attrs.insert(key, value.to_owned());
+                    } else {
+                        attrs.remove(key);
+                    }
+                }
+            } else {
+                if let Some(height) = attrs.get("height").and_then(|s| s.parse::<u32>().ok()) {
+                    attrs.insert("height", ((height as f64 * 1.5).round() as u32).to_string());
+                }
+                attrs.insert("width", "480".into());
+            }
+        }
         let old_width = attrs
             .get("width")
             .and_then(|s| s.parse::<u32>().ok())
             .filter(|w| *w > 0);
-        let width = old_width.unwrap_or(320).min(320);
+        let width = old_width.unwrap_or(480).min(480);
         let height = old_width
             .zip(attrs.get("height").and_then(|s| s.parse::<u32>().ok()))
             .map(|(w, h)| ((h as f64 * width as f64 / w as f64).round() as u32).max(1));
@@ -380,15 +418,33 @@ mod tests {
     const BASE: &str = "https://www.example.com";
 
     #[test]
+    fn upgrading_previous_default_recovers_original_smaller_dimensions() {
+        let previous = r#"<img src="/a.jpg" width="640" height="480"><img src="/b.jpg" width="329" height="200">"#;
+        let current = r#"<img src="/a.jpg" width="320" height="240" class="aligncenter" style="max-width: 100%; height: auto"><img src="/b.jpg" width="320" height="195" class="aligncenter" style="max-width: 100%; height: auto"><img src="/new.jpg" width="320" class="aligncenter" style="max-width: 100%; height: auto"><img src="/custom.jpg" width="400">"#;
+        let result = apply_article_image_defaults(current, BASE, Some(previous));
+        let parsed = kuchiki::parse_html().one(result.clone());
+        let sizes = parsed
+            .select("img")
+            .unwrap()
+            .map(|i| i.attributes.borrow().get("width").unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(sizes, ["480", "329", "480", "400"]);
+        assert_eq!(
+            apply_article_image_defaults(&result, BASE, Some(previous)),
+            result
+        );
+    }
+
+    #[test]
     fn article_image_cleanup_preserves_small_sizes_metadata_and_is_idempotent() {
         let input = r#"<figure class="alignleft"><img src="/a.jpg" alt="Keep alt" width="640" height="480" srcset="/a.jpg 640w" style="float:left"><figcaption>Keep caption</figcaption></figure><!--more--><img src="/b.jpg" width="200" height="100"><img src="/c.jpg">"#;
-        let clean = apply_article_image_defaults(input, BASE);
+        let clean = apply_article_image_defaults(input, BASE, None);
         let doc = kuchiki::parse_html().one(clean.clone());
         let images = doc.select("img").unwrap().collect::<Vec<_>>();
         for (image, width, height) in [
-            (&images[0], "320", Some("240")),
+            (&images[0], "480", Some("360")),
             (&images[1], "200", Some("100")),
-            (&images[2], "320", None),
+            (&images[2], "480", None),
         ] {
             let attrs = image.attributes.borrow();
             assert_eq!(attrs.get("width"), Some(width));
@@ -400,11 +456,11 @@ mod tests {
         assert!(clean.contains("Keep caption"));
         assert!(clean.contains("<!--more-->"));
         assert!(!clean.contains("float"));
-        assert_eq!(apply_article_image_defaults(&clean, BASE), clean);
+        assert_eq!(apply_article_image_defaults(&clean, BASE, None), clean);
         // Normal editing still accepts a deliberately chosen larger size.
         assert!(sanitize(input, BASE).contains("width=\"640\""));
         assert_eq!(
-            apply_article_image_defaults("<p>No image</p>", BASE),
+            apply_article_image_defaults("<p>No image</p>", BASE, None),
             "<p>No image</p>"
         );
     }

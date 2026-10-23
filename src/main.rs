@@ -72,7 +72,7 @@ enum Command {
         expected_active: String,
     },
     #[cfg(unix)]
-    /// Apply a one-time 320px image cap to articles, preserving private revisions.
+    /// Apply a one-time 480px image cap to articles, preserving private revisions.
     NormalizeArticleImages {
         #[arg(long)]
         content: PathBuf,

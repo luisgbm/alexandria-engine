@@ -113,7 +113,7 @@ fn tree_hash(root: &Path) -> Result<String> {
     Ok(digest(&serde_json::to_string(&rows)?))
 }
 
-fn normalize_article_images(entry: &mut Entry, base: &str) -> bool {
+fn normalize_article_images(entry: &mut Entry, base: &str, original_root: Option<&Path>) -> bool {
     if entry.metadata.kind != "post" {
         return false;
     }
@@ -127,7 +127,7 @@ fn normalize_article_images(entry: &mut Entry, base: &str) -> bool {
             .any(|image| image.attributes.borrow().get("src") == Some(src.as_str()))
         {
             entry.body = format!(
-                "<figure style=\"text-align:center;\"><img src=\"{}\" alt=\"{}\" width=\"320\" style=\"max-width:100%;height:auto;\"><figcaption>{}</figcaption></figure>\n{}",
+                "<figure style=\"text-align:center;\"><img src=\"{}\" alt=\"{}\" width=\"480\" style=\"max-width:100%;height:auto;\"><figcaption>{}</figcaption></figure>\n{}",
                 html::escape(src),
                 html::escape(entry.metadata.featured_image_alt.as_deref().unwrap_or("")),
                 html::escape(
@@ -143,7 +143,15 @@ fn normalize_article_images(entry: &mut Entry, base: &str) -> bool {
         entry.metadata.featured_image_alt = None;
         entry.metadata.featured_image_caption = None;
     }
-    entry.body = html::apply_article_image_defaults(&entry.body, base);
+    let original = original_root.map(|root| {
+        fs::read_to_string(
+            root.join("articles")
+                .join(&entry.metadata.id)
+                .join("body.html"),
+        )
+        .unwrap_or_default()
+    });
+    entry.body = html::apply_article_image_defaults(&entry.body, base, original.as_deref());
     entry.body != before || featured.is_some()
 }
 impl Publisher {
@@ -338,7 +346,7 @@ impl Publisher {
                 let site = read_site(&content.join("site.json"))?;
                 for mut entry in load_entries(&content)? {
                     if entry.metadata.status == "published"
-                        && normalize_article_images(&mut entry, &site.base_url)
+                        && normalize_article_images(&mut entry, &site.base_url, Some(source))
                     {
                         let folder = content.join("articles").join(&entry.metadata.id);
                         write_json(&folder.join("metadata.json"), &entry.metadata)?;
@@ -624,7 +632,7 @@ pub fn console_normalize_article_images(
     let mut published_changed = 0;
     for entry in &published {
         if entry.metadata.status == "published"
-            && normalize_article_images(&mut entry.clone(), &site.base_url)
+            && normalize_article_images(&mut entry.clone(), &site.base_url, Some(content))
         {
             published_changed += 1;
         }
@@ -659,7 +667,7 @@ pub fn console_normalize_article_images(
                 body: doc.html.clone(),
             }
         };
-        if !normalize_article_images(&mut entry, &store.site.base_url) {
+        if !normalize_article_images(&mut entry, &store.site.base_url, Some(content)) {
             continue;
         }
         let mut next = doc.clone();
@@ -899,7 +907,7 @@ mod publishing_tests {
             .unwrap();
         let public =
             fs::read_to_string(p.root.join("current/artigos/original/index.html")).unwrap();
-        assert!(public.contains("width=\"320\""));
+        assert!(public.contains("width=\"480\""));
         assert!(public.contains("Public article"));
         assert!(!public.contains("Published selected revision"));
         assert_eq!(
@@ -933,13 +941,15 @@ mod publishing_tests {
         let mut unchanged = page.clone();
         assert!(!normalize_article_images(
             &mut unchanged,
-            "https://www.example.com"
+            "https://www.example.com",
+            None
         ));
         assert_eq!(unchanged.body, page.body);
         assert!(unchanged.metadata.featured_image.is_some());
         assert!(normalize_article_images(
             &mut entry,
-            "https://www.example.com"
+            "https://www.example.com",
+            None
         ));
         assert!(entry.metadata.featured_image.is_none());
         assert!(entry.body.contains("Alt text"));
@@ -947,7 +957,8 @@ mod publishing_tests {
         assert_eq!(entry.body.matches("<img ").count(), 1);
         assert!(!normalize_article_images(
             &mut entry,
-            "https://www.example.com"
+            "https://www.example.com",
+            None
         ));
     }
     fn setup() -> (tempfile::TempDir, Publisher, PathBuf, Document) {

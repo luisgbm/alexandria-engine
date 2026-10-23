@@ -1011,7 +1011,7 @@ async fn list_entries(
 ) -> ApiResult<Json<serde_json::Value>> {
     app.session(&headers, false)?;
     let store = app.store.lock().unwrap();
-    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.metadata.status=="draft","trashed":d.trashed,"tags":d.metadata.tags,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
+    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.metadata.status=="draft","trashed":d.trashed,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
     Ok(Json(serde_json::json!({"entries":entries})))
 }
 async fn get_entry(
@@ -1126,8 +1126,6 @@ struct Save {
     #[serde(default)]
     auto_permalink: bool,
     categories: Vec<String>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
     featured_image: Option<String>,
     featured_image_alt: String,
     featured_image_caption: String,
@@ -1260,9 +1258,6 @@ async fn save_entry(
     document.metadata.status = "draft".into();
     document.metadata.permalink = input.permalink;
     document.metadata.categories = input.categories;
-    if let Some(tags) = input.tags {
-        document.metadata.tags = editorial::validate_tags(tags)?;
-    }
     document.metadata.featured_image = input.featured_image;
     document.metadata.featured_image_alt = Some(input.featured_image_alt);
     document.metadata.featured_image_caption = Some(input.featured_image_caption);
