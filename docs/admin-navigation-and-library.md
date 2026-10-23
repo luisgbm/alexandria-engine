@@ -579,3 +579,13 @@ navigation, period defaults and purge controls. An unauthenticated purge returns
 `release-20261023T202054-317f91629ea4`. Both credential records, the library
 catalog and all 1,550 source media files were verified unchanged. Private backup:
 `/root/alexandria-before-admin-layout-20261023T204814Z`.
+
+
+Admin/main-site menu parity: admin links now use the same 500-weight 16px/24px
+system font, 44px minimum target, colors, radii and subtle shadow. The hamburger
+uses the same 160ms transform/background transition and translated +/-6px,
++/-45-degree strokes instead of abruptly resetting their top positions. Both
+menus respect reduced-motion preferences. Browser checks confirmed 500-weight
+links, the expected open/closed transforms and no mobile horizontal overflow.
+Screenshot (isolated preview data):
+`admin-validation/admin-matching-menu-20261023.png`.
