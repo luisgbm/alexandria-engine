@@ -157,3 +157,24 @@ remains visible. This applies only to imported `wp-content/uploads` assets;
 native uploads are unchanged. Existing size files and URLs remain available
 for article HTML, responsive images, revision history, and rollback releases.
 This is library deduplication, not physical file deletion or storage savings.
+
+## Automatic draft permalinks
+
+Typing a title updates an unpublished draft address immediately. Accents are
+removed, words are lowercase and separated by hyphens: `Teste de Artigo` becomes
+`/artigos/teste-de-artigo/`. Pages use `/teste-de-artigo/`. Generated URLs retain
+the existing trailing-slash convention. A collision adds six random hexadecimal
+characters, for example `/artigos/teste-de-artigo-2bac3d/`.
+
+The authenticated server checks draft/published/trashed content, imported observed
+paths, redirects, attachment pages and retained published-path records. Saving
+checks again under the store lock, so simultaneous drafts cannot save the same
+automatic URL. A suggested hash stays stable while it remains available. Delayed
+suggestions cannot overwrite newer typing, a different document or a manual URL.
+Manually typing an address turns off generation for the current editing session;
+custom URL collisions still return an error when saving. Published addresses
+remain locked when their titles change. Suggestions do not save or publish drafts.
+
+Validation: `cargo test` and `node --test tests/admin-permalinks.test.cjs` cover
+normalization, collision suffixes, save-time races, reserved paths, authentication,
+CSRF, published addresses, manual overrides and stale suggestion responses.

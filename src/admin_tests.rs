@@ -1468,3 +1468,165 @@ async fn categories_crud_checks_conflicts_usage_and_persists_catalog() {
     );
     assert_eq!(Store::open(root).unwrap().site.categories.len(), 1);
 }
+
+#[tokio::test]
+async fn automatic_permalinks_normalize_check_collisions_and_recheck_on_save() {
+    let (_temp, app) = fixture();
+    let (cookie, csrf) = authenticated(&app);
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        "/api/articles/wp-1/permalink",
+        None,
+        None,
+        serde_json::json!({"title":"Teste"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        "/api/articles/wp-1/permalink",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"title":"Teste"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST); // Published URLs stay immutable.
+    let (_, _, first) = call(
+        &app,
+        "POST",
+        "/api/articles",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({}),
+    )
+    .await;
+    let (_, _, second) = call(
+        &app,
+        "POST",
+        "/api/articles",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({}),
+    )
+    .await;
+    let id = first["metadata"]["id"].as_str().unwrap();
+    let route = format!("/api/articles/{id}/permalink");
+    let (status, _, suggestion) = call(
+        &app,
+        "POST",
+        &route,
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"title":"Téste de Artigo!!!"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(suggestion["permalink"], "/artigos/teste-de-artigo/");
+    let (_, _, duplicate) = call(
+        &app,
+        "POST",
+        &route,
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"title":"Original"}),
+    )
+    .await;
+    let duplicate_path = duplicate["permalink"].as_str().unwrap();
+    assert!(duplicate_path.starts_with("/artigos/original-"));
+    assert_eq!(duplicate_path.len(), "/artigos/original-".len() + 7);
+    let (_, _, repeated) = call(
+        &app,
+        "POST",
+        &route,
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"title":"Original","current":duplicate_path}),
+    )
+    .await;
+    assert_eq!(duplicate, repeated);
+    let mut saved_paths = Vec::new();
+    for document in [&first, &second] {
+        let payload = serde_json::json!({"revision":document["revision"],"title":"Teste de Artigo","html":"<p>Body</p>","permalink":"/artigos/teste-de-artigo/","auto_permalink":true,"categories":["artigos"],"featured_image":null,"featured_image_alt":"","featured_image_caption":"","published_local":"2026-10-23T15:00:00"});
+        let (status, _, saved) = call(
+            &app,
+            "PUT",
+            &format!(
+                "/api/articles/{}",
+                document["metadata"]["id"].as_str().unwrap()
+            ),
+            Some(&cookie),
+            Some(&csrf),
+            payload,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        saved_paths.push(saved["metadata"]["permalink"].as_str().unwrap().to_string());
+    }
+    assert_eq!(saved_paths[0], "/artigos/teste-de-artigo/");
+    assert_ne!(saved_paths[0], saved_paths[1]);
+    assert!(saved_paths[1].starts_with("/artigos/teste-de-artigo-"));
+    let store = app.store.lock().unwrap();
+    let doc = store.entries.get(id).unwrap();
+    assert_eq!(
+        permalinks::available(&store, doc, "Teste de Artigo", Some(&saved_paths[0])).unwrap(),
+        saved_paths[0]
+    );
+}
+
+#[tokio::test]
+async fn automatic_permalinks_reserve_redirects_attachments_trash_and_published_history() {
+    let (_temp, app) = fixture();
+    let (cookie, csrf) = authenticated(&app);
+    let (_, _, draft) = call(
+        &app,
+        "POST",
+        "/api/articles",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({}),
+    )
+    .await;
+    let id = draft["metadata"]["id"].as_str().unwrap();
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        &format!("/api/articles/{id}/permalink"),
+        Some(&cookie),
+        None,
+        serde_json::json!({"title":"Blocked"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let mut store = app.store.lock().unwrap();
+    store
+        .site
+        .redirects
+        .insert("/artigos/redirect/".into(), "/artigos/original/".into());
+    store.site.observed_paths.push("/artigos/observed/".into());
+    store.entries.get_mut("wp-1").unwrap().trashed = true;
+    write_json(&store.root.join("attachments.json"),&serde_json::json!([{"id":"2","parent":"1","title":"Attachment","path":"/uploads/a.jpg","alt":"","caption":"","description":"","permalink":"/artigos/attachment/"}])).unwrap();
+    let old = store.root.join("editorial/purged-entry");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("published-path"), "/artigos/history/").unwrap();
+    let document = store.entries.get(id).unwrap();
+    for title in ["redirect", "observed", "attachment", "original", "history"] {
+        let suggested = permalinks::available(&store, document, title, None).unwrap();
+        assert!(
+            suggested.starts_with(&format!("/artigos/{title}-")),
+            "{suggested}"
+        );
+    }
+    let mut page = document.clone();
+    page.metadata.kind = "page".into();
+    assert_eq!(
+        permalinks::available(&store, &page, "Minha Página", None).unwrap(),
+        "/minha-pagina/"
+    );
+    assert!(
+        permalinks::available(&store, &page, "Feed", None)
+            .unwrap()
+            .starts_with("/feed-")
+    );
+}
