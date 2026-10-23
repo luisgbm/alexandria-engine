@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Alexandria site metadata v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "title", "base_url", "timezone", "page_size", "categories", "authors", "navigation", "redirects", "expected_missing", "observed_paths", "banner"],
+  "properties": {
+    "schema_version": {"const": 1}, "title": {"type": "string"},
+    "base_url": {"type": "string", "pattern": "^https://[^/]+$"},
+    "timezone": {"type": "string"}, "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+    "categories": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "slug", "parent"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string", "minLength": 1}, "parent": {"type": "string"}}}},
+    "authors": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "slug"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string", "minLength": 1}}}},
+    "navigation": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["title", "path"], "properties": {"title": {"type": "string"}, "path": {"type": "string"}}}},
+    "redirects": {"type": "object", "additionalProperties": {"type": "string"}},
+    "expected_missing": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "observed_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "banner": {"type": ["string", "null"]}
+  }
+}

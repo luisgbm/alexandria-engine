@@ -1,0 +1,9 @@
+/target/
+/content/
+/releases/
+/private/
+*.sqlite
+*.sqlite-*
+*.tar.gz
+.env
+__pycache__/

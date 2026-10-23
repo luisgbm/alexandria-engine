@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Alexandria content metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "wordpress_id", "kind", "status", "title", "published_at", "modified_at", "original_published_local", "original_published_gmt", "permalink", "categories", "tags", "author", "featured_image", "featured_image_alt", "featured_image_caption", "legacy_urls", "listings"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+    "wordpress_id": {"type": "string", "pattern": "^[0-9]*$"},
+    "kind": {"enum": ["post", "page"]},
+    "status": {"enum": ["published", "draft", "pending", "private", "future"]},
+    "title": {"type": "string"},
+    "published_at": {"type": ["string", "null"], "format": "date-time"},
+    "modified_at": {"type": ["string", "null"], "format": "date-time"},
+    "original_published_local": {"type": "string"},
+    "original_published_gmt": {"type": "string"},
+    "permalink": {"type": ["string", "null"], "pattern": "^/.*$"},
+    "categories": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "author": {"type": "string", "pattern": "^[0-9]+$"},
+    "featured_image": {"type": ["string", "null"]},
+    "featured_image_alt": {"type": ["string", "null"]},
+    "featured_image_caption": {"type": ["string", "null"]},
+    "legacy_urls": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "listings": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["category", "order_by", "ascending", "dates"],
+      "properties": {"category": {"type": "string"}, "order_by": {"enum": ["date", "title"]}, "ascending": {"type": "boolean"}, "dates": {"type": "boolean"}}
+    }}
+  },
+  "allOf": [{"if": {"properties": {"status": {"const": "published"}}}, "then": {"properties": {"permalink": {"type": "string"}, "published_at": {"type": "string"}}}}]
+}
