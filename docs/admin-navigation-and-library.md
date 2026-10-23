@@ -621,3 +621,24 @@ startup reports 450 published entries, 5 unpublished entries, and 0 published
 entries with pending changes. Content/revision files and credential records were
 verified unchanged; the public release was not rebuilt or switched. Binary backup:
 `/root/alexandria-before-draft-status-20261023T231728Z`.
+
+
+## Author page presentation
+
+The author page keeps its existing URL and editable page HTML. Its
+`author-profile` wrapper pairs the existing 240px portrait with the author name,
+credentials and biography on desktop; it stacks them on mobile. The biography's
+facts and all thirteen books remain. `author-books` adds a light two-column list
+on desktop with understated publication details and separators; mobile uses one
+column. Links at the end lead to the existing article archive and books page.
+All styles are scoped to these author-page classes. The original imported page
+and previous published release remain available for recovery/history.
+
+
+Author polish staging release: `release-20261023T235754-61f7bcb91951`.
+Verified all thirteen books, loaded 240px portrait, side-by-side desktop layout,
+stacked mobile layout and no horizontal overflow. Other article/page bodies and
+metadata and public site settings were checked unchanged. Recovery copy:
+`/root/alexandria-before-author-polish-20261023T235753Z`. Screenshots:
+`admin-validation/author-page-polish-desktop-20261023.png` and
+`admin-validation/author-page-polish-mobile-20261023.png`.

@@ -12,3 +12,7 @@
 
 /* Author portrait: keep the biography photo compact after widening content. */
 .entry-content img.wp-image-2987{width:240px;max-width:100%;height:auto}
+
+/* Quiet author biography layout; content stays editable as ordinary page HTML. */
+.author-profile{display:grid;grid-template-columns:240px minmax(0,1fr);gap:2rem;align-items:start;margin:2rem 0 2.5rem}.author-portrait{margin:0;width:240px;max-width:100%}.author-portrait img{display:block;border-radius:8px;box-shadow:0 3px 16px #263d2c16}.author-intro h2{font-size:clamp(1.5rem,3vw,2rem);line-height:1.25;margin:0 0 .75rem}.author-credentials{font-size:.97rem;line-height:1.6;color:#62645b;border-bottom:1px solid #d8d6cd;padding-bottom:1rem;margin:0 0 1.25rem}.author-intro p:last-child{margin-bottom:0}.author-bibliography h2{margin-bottom:.5rem}.author-books{list-style:none;padding:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:2rem;margin:1rem 0 2rem}.author-books li{padding:.85rem 0;border-bottom:1px solid #e2e3db}.author-book-title{font-weight:600}.author-book-details{display:block;font-size:.93rem;color:#62645b;margin-top:.2rem}.author-links{display:flex;flex-wrap:wrap;gap:.75rem 1.5rem;border-top:1px solid #d8d6cd;padding-top:1.25rem;margin-top:2rem}
+@media(max-width:48rem){.author-profile{grid-template-columns:minmax(0,1fr);gap:1.5rem;margin-top:1.5rem}.author-portrait{justify-self:center}.author-intro h2,.author-credentials{text-align:center}.author-books{grid-template-columns:minmax(0,1fr)}}
