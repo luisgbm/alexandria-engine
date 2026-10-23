@@ -33,6 +33,8 @@ use webauthn_rs::prelude::*;
 mod editorial;
 #[path = "admin/library.rs"]
 mod library;
+#[path = "admin/permalinks.rs"]
+mod permalinks;
 #[path = "admin/publishing.rs"]
 mod publishing;
 pub use publishing::{console_publish, console_rollback, initialize_publishing};
@@ -713,6 +715,7 @@ fn router(app: Shared) -> Router {
             get(editorial::trash_summary).post(editorial::empty_trash),
         )
         .route("/api/articles/{id}", get(get_entry).put(save_entry))
+        .route("/api/articles/{id}/permalink", post(permalinks::suggest))
         .route("/api/articles/{id}/revisions", get(editorial::revisions))
         .route(
             "/api/articles/{id}/revisions/{revision}",
@@ -1108,6 +1111,8 @@ struct Save {
     title: String,
     html: String,
     permalink: Option<String>,
+    #[serde(default)]
+    auto_permalink: bool,
     categories: Vec<String>,
     #[serde(default)]
     tags: Option<Vec<String>>,
@@ -1120,7 +1125,7 @@ async fn save_entry(
     State(app): State<Shared>,
     headers: HeaderMap,
     RoutePath(id): RoutePath<String>,
-    Json(input): Json<Save>,
+    Json(mut input): Json<Save>,
 ) -> ApiResult<Json<Document>> {
     app.session(&headers, true)?;
     let mut store = app.store.lock().unwrap();
@@ -1131,6 +1136,14 @@ async fn save_entry(
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Artigo não encontrado.".into()))?;
     if old.trashed {
         return Err(bad("Restaure o conteúdo da lixeira antes de editar."));
+    }
+    if input.auto_permalink && !permalinks::locked(&store, &old) {
+        input.permalink = Some(permalinks::available(
+            &store,
+            &old,
+            &input.title,
+            input.permalink.as_deref(),
+        )?);
     }
     let historical_path = store
         .root

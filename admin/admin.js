@@ -216,11 +216,13 @@
 
   function setDocument(data) {
 
+    if(doc?.metadata.id!==data.metadata.id)autoPermalink=true;
+    clearTimeout(permalinkTimer);++permalinkGeneration;
     doc=data;dirty=false;const m=data.metadata;$("tags").value=m.tags.join(", ");
 
     $("editor").hidden=false;$("empty").hidden=true;$("title").value=m.title;$("html").value=editableHtml(data);$("permalink").value=m.permalink||"";
 
-    $("permalink").readOnly=data.permalink_locked||data.publication_status==="published";$("path-hint").textContent=$("permalink").readOnly ? "Este endereço já é público e será preservado." : "Escolha o endereço definitivo antes da publicação.";
+    $("permalink").readOnly=data.permalink_locked||data.publication_status==="published";$("path-hint").textContent=$("permalink").readOnly ? "Este endereço já é público e será preservado." : "Gerado pelo título; endereços repetidos recebem um sufixo. Você também pode editar manualmente.";
 
     $("published-local").value=m.original_published_local.replace(" ","T");
 
@@ -349,7 +351,33 @@
 
   for(const id of ["title","html","permalink","published-local","categories","tags"])$(id).addEventListener("input",edit);
 
-  function fields() {return {tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:null,featured_image_alt:"",featured_image_caption:""};}
+
+  let autoPermalink=true, permalinkTimer, permalinkGeneration=0;
+  function titlePermalink(title,kind){
+    const slug=title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/[^a-z0-9]+/).filter(Boolean).join("-").slice(0,200).replace(/-+$/,"")||"sem-titulo";
+    return `${kind==="page" ? "/" : "/artigos/"}${slug}/`;
+  }
+  $("title").addEventListener("input",()=>{
+    clearTimeout(permalinkTimer);const generation=++permalinkGeneration;
+    if(!doc || !autoPermalink || $("permalink").readOnly)return;
+    const id=doc.metadata.id,title=$("title").value;
+    $("permalink").value=titlePermalink(title,doc.metadata.kind);
+    $("path-hint").textContent="Verificando disponibilidade do endereço…";
+    permalinkTimer=setTimeout(async()=>{
+      try{
+        const result=await api(`/api/articles/${encodeURIComponent(id)}/permalink`,{method:"POST",body:JSON.stringify({title,current:$("permalink").value})});
+        if(generation!==permalinkGeneration || doc?.metadata.id!==id || !autoPermalink)return;
+        $("permalink").value=result.permalink;$("path-hint").textContent="Endereço disponível. A disponibilidade será verificada novamente ao salvar.";
+        schedulePreview();
+      }catch(error){if(generation===permalinkGeneration)$("path-hint").textContent=`Não foi possível verificar agora. O endereço será verificado ao salvar. ${error.message}`;}
+    },300);
+  });
+  $("permalink").addEventListener("input",()=>{
+    autoPermalink=false;clearTimeout(permalinkTimer);++permalinkGeneration;
+    $("path-hint").textContent="Endereço personalizado; será verificado ao salvar.";
+  });
+
+  function fields() {return {auto_permalink:autoPermalink&&!$("permalink").readOnly,tags:$("tags").value.split(",").map(t=>t.trim()).filter(Boolean),title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:null,featured_image_alt:"",featured_image_caption:""};}
 
   $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshAfterSuccess("Rascunho salvo. O site não foi alterado.",refreshEntries);});};
 
