@@ -4,6 +4,20 @@
   const input = document.querySelector("#query");
   const results = document.querySelector("#search-results");
   const status = document.querySelector("#search-status");
+  const panel = document.querySelector("#search-panel");
+  const content = document.querySelector("#page-content");
+  const close = document.querySelector("#close-search");
+  function updateUrl(query) {
+    const url = new URL(location.href);
+    if (url.pathname === "/search/") url.pathname = "/";
+    if (query) url.searchParams.set("q",query); else url.searchParams.delete("q");
+    history.replaceState(null,"",url.pathname+url.search+url.hash);
+  }
+  function clearSearch(focus = false) {
+    ++generation;input.value="";results.replaceChildren();status.textContent="";
+    panel.hidden=true;content.hidden=false;updateUrl("");
+    if(focus)input.focus();
+  }
   const normalize = value => value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
   function highlight(parent, text, terms) {
     for (const part of text.split(/([\p{L}\p{N}]+)/u)) {
@@ -20,7 +34,8 @@
     const current = ++generation;
     results.replaceChildren();
     const terms = [...new Set(normalize(query).match(/[\p{L}\p{N}]+/gu) || [])];
-    if (!terms.length) { status.textContent = "Digite uma palavra para pesquisar."; return; }
+    if (!terms.length) { clearSearch(); return; }
+    panel.hidden=false;content.hidden=true;
     status.textContent = "Pesquisando…";
     try {
       resources ||= Promise.all(["documents", "index"].map(name => fetch(`/search/${name}.json`).then(response => {
@@ -58,9 +73,13 @@
   form.addEventListener("submit", event => {
     event.preventDefault();
     const query = input.value.trim();
-    history.replaceState(null, "", `?q=${encodeURIComponent(query)}`);
+    updateUrl(query);
     search(query);
   });
+  close.addEventListener("click",()=>clearSearch(true));
+  input.addEventListener("input",()=>{if(!input.value.trim())clearSearch();});
+  input.addEventListener("keydown",event=>{if(event.key==="Escape"){event.preventDefault();clearSearch(true);}});
+  if(location.pathname==="/search/") updateUrl(new URLSearchParams(location.search).get("q")||"");
   input.value = new URLSearchParams(location.search).get("q") || "";
   if (input.value) search(input.value);
 })();

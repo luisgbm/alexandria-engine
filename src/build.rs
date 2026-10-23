@@ -74,6 +74,7 @@ fn template(site: &Site, path: &str, title: &str, body: &str, description: &str)
     let nav = site
         .navigation
         .iter()
+        .filter(|n| n.path != "/search/")
         .map(|n| format!("<a href=\"{}\">{}</a>", e(&n.path), e(&n.title)))
         .collect::<Vec<_>>()
         .join(" ");
@@ -87,14 +88,22 @@ fn template(site: &Site, path: &str, title: &str, body: &str, description: &str)
             )
         })
         .unwrap_or_default();
+    let document_title = if title == site.title {
+        e(title)
+    } else {
+        format!("{} — {}", e(title), e(&site.title))
+    };
+    let brand = format!("<a class=\"site-title\" href=\"/\">{}</a>", e(&site.title));
+    let brand = if path == "/" || path.starts_with("/page/") {
+        format!("<h1 class=\"site-heading\">{brand}</h1>")
+    } else {
+        brand
+    };
     format!(
-        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{} — {}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css\"><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS\" href=\"/feed/\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><a class=\"site-title\" href=\"/\">{}</a>{banner}<nav aria-label=\"Principal\">{nav}<a href=\"/search/\">Pesquisar</a></nav></header><main id=\"conteudo\">{body}</main><footer><a href=\"/feed/\">RSS</a> · {}</footer></body></html>\n",
-        e(title),
-        e(&site.title),
+        "<!doctype html>\n<html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{document_title}</title><meta name=\"description\" content=\"{}\"><link rel=\"canonical\" href=\"{}{}\"><link rel=\"stylesheet\" href=\"/assets/site.css\"><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS\" href=\"/feed/\"></head><body><a class=\"skip\" href=\"#conteudo\">Pular para o conteúdo</a><header><div class=\"site-top\">{brand}<form id=\"search-form\" role=\"search\" aria-label=\"Pesquisar no arquivo\" action=\"/\" method=\"get\"><label class=\"sr\" for=\"query\">Pesquisar no arquivo</label><input id=\"query\" name=\"q\" type=\"search\" placeholder=\"Pesquisar no arquivo…\" required><button type=\"submit\">Pesquisar</button></form></div>{banner}<nav aria-label=\"Principal\">{nav}</nav><noscript><p>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</p></noscript></header><main id=\"conteudo\"><section id=\"search-panel\" aria-labelledby=\"search-heading\" hidden><div class=\"search-toolbar\"><h2 id=\"search-heading\">Resultados da pesquisa</h2><button id=\"close-search\" type=\"button\">Fechar pesquisa</button></div><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol></section><div id=\"page-content\">{body}</div></main><footer><a href=\"/feed/\">RSS</a> · {}</footer><script src=\"/assets/search.js\" defer></script></body></html>\n",
         e(description),
         e(&site.base_url),
         e(path),
-        e(&site.title),
         e(&site.title)
     )
 }
@@ -217,8 +226,12 @@ fn archive(
         let start = i * site.page_size;
         let end = (start + site.page_size).min(entries.len());
         let mut body = format!(
-            "<h1>{}</h1>{}",
-            html::escape(title),
+            "{}{}",
+            if root == "/" {
+                String::new()
+            } else {
+                format!("<h1>{}</h1>", html::escape(title))
+            },
             if root == "/" {
                 article_previews(&entries[start.min(end)..end], &site.base_url)
             } else {
@@ -246,9 +259,11 @@ fn archive(
         }
         body.push_str("</nav>");
         if root == "/" {
-            body = format!("<div class=\"home-layout\"><section class=\"home-main\">{body}</section><aside class=\"home-sidebar\" aria-label=\"Barra lateral\"><div class=\"sidebar-content\">{}</div><section aria-labelledby=\"recent-articles-title\"><h2 id=\"recent-articles-title\">Artigos recentes</h2>{}</section></aside></div>",
+            body = format!(
+                "<div class=\"home-layout\"><section class=\"home-main\">{body}</section><aside class=\"home-sidebar\" aria-label=\"Barra lateral\"><div class=\"sidebar-content\">{}</div><section aria-labelledby=\"recent-articles-title\"><h2 id=\"recent-articles-title\">Artigos recentes</h2>{}</section></aside></div>",
                 html::sanitize(&site.homepage_sidebar_html, &site.base_url),
-                item_list(&entries[..entries.len().min(10)], true));
+                item_list(&entries[..entries.len().min(10)], true)
+            );
         }
         writer.page(
             &path,
@@ -489,6 +504,9 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">",
     );
     for path in &writer.pages {
+        if path == "/search/" {
+            continue;
+        }
         sitemap.push_str(&format!(
             "<url><loc>{}{}</loc></url>",
             html::escape(&site.base_url),
@@ -504,7 +522,7 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
             &site,
             "/404.html",
             "Página não encontrada",
-            "<h1>Página não encontrada</h1><p><a href=\"/search/\">Pesquisar no arquivo</a></p>",
+            "<h1>Página não encontrada</h1><p>Use a pesquisa no topo da página ou <a href=\"/\">volte à página inicial</a>.</p>",
             "Página não encontrada",
         ),
     )?;
@@ -641,7 +659,7 @@ struct SearchDocument {
     url: String,
     text: String,
 }
-fn search(writer: &mut Writer<'_>, site: &Site, entries: &[&Entry]) -> Result<()> {
+fn search(writer: &mut Writer<'_>, _site: &Site, entries: &[&Entry]) -> Result<()> {
     let mut documents = Vec::new();
     let mut index: BTreeMap<String, BTreeMap<usize, u32>> = BTreeMap::new();
     for (i, e) in entries.iter().enumerate() {
@@ -663,7 +681,10 @@ fn search(writer: &mut Writer<'_>, site: &Site, entries: &[&Entry]) -> Result<()
     }
     writer.file("/search/documents.json", serde_json::to_vec(&documents)?)?;
     writer.file("/search/index.json", serde_json::to_vec(&index)?)?;
-    writer.page("/search/",&template(site,"/search/","Pesquisar","<h1>Pesquisar no arquivo</h1><form id=\"search-form\" role=\"search\"><label for=\"query\">Palavras no título ou no texto</label><input id=\"query\" name=\"q\" type=\"search\" required><button>Pesquisar</button></form><p id=\"search-status\" role=\"status\" aria-live=\"polite\"></p><ol id=\"search-results\"></ol><noscript>A pesquisa requer JavaScript. Você pode navegar pelos arquivos.</noscript><script src=\"/assets/search.js\" defer></script>","Busca em português"))?;
+    // Keep old search links working, with the same homepage and inline search UI.
+    // The client canonicalizes /search/?q=... to /?q=... without another load.
+    let home = fs::read_to_string(writer.root.join("index.html"))?;
+    writer.page("/search/", &home)?;
     Ok(())
 }
 
