@@ -3,7 +3,7 @@
 Prepared on alexandria on 2026-10-23, without activation or DNS/original-site changes.
 The private candidate directory is:
 
-`/var/lib/alexandria-production-candidate/20261023-clean-v2`
+`/var/lib/alexandria-production-candidate/20261023-clean-v3`
 
 - `content/`: independent portable content copy, including imported revision history.
 - `release/public/`: validated static output, not configured in any Nginx vhost.
@@ -14,8 +14,9 @@ The candidate contains 444 published articles, five published pages and zero
 drafts. The owner confirmed that the five imported drafts had already been deleted
 in WordPress; their document directories and revision histories are excluded from
 this production candidate. The earlier v1 candidate and staging remain intact.
-The build passed with 449 published entries, 1,094 static pages and seven already
-known broken destinations. Those URL decisions remain a separate readiness gate.
+The build passed with 449 published entries, 1,094 static pages and zero broken internal links after the approved eight-post
+cleanup. Historical missing destinations still return 404; their inbound links
+were removed or corrected. See [WordPress cleanup](wordpress-link-cleanup.md).
 
 ## Explicit fixture exclusions
 
@@ -73,7 +74,12 @@ database. Final authentication setup and backup are separate launch tasks.
 - Preserved all 449 published imported document IDs; zero drafts remain.
 - Excluded retired draft IDs `wp-2414`, `wp-2721`, `wp-2731`, `wp-2747`,
   `wp-3041` and their revision histories.
-- Confirmed generated public files are byte-for-byte identical to v1.
+- The preceding v2 draft-removal build was byte-for-byte identical to v1.
+- Current v3 applies the approved link repairs to eight posts; all eight generated
+  pages were checked, the Kuhn target retained, and the build reports zero broken
+  internal links. `link-repair-report.json` records the edited IDs and hashes.
+- Repeat these repairs with `ops/repair-broken-links.py --source CLEAN_CONTENT
+  --output NEW_CANDIDATE`, then build its content directory.
 - Found zero fixture IDs, paths or image names in generated HTML/JSON/XML/text.
 - Confirmed fixture pages/uploads absent from candidate public output.
 - Confirmed all four staging drafts and three staging image files still exist.

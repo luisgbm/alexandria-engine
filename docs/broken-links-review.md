@@ -55,3 +55,14 @@ the approved resolution is applied and validated.
 
 Private response evidence:
 `C:\Users\luisg\Backups\culturaespiritual\admin-validation\broken-links-review-20261023.json`.
+
+## Applied to inactive production candidate
+
+The owner approved retiring obsolete contact/translation links and correcting
+the Kuhn reference. Candidate `20261023-clean-v3` applies all eight article edits
+using `ops/repair-broken-links.py`. Build: 449 published entries, 1,094 static
+pages, zero broken internal links. All eight generated pages were checked.
+Staging's active baseline, original WordPress and DNS were unchanged. See
+[manual WordPress instructions](wordpress-link-cleanup.md) for the owner to make
+the equivalent edits there. The earlier recommendation/decision section above
+records the review before approval.

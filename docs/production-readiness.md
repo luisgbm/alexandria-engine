@@ -74,7 +74,10 @@ launch. Trash deliberately does not remove already published content.
    assets from a separate production input/export; preserve staging fixtures and
    private history. Do not treat trash as an unpublish operation. Reconcile the
    latest WordPress content at the final editing freeze before rebuilding.
-2. **Close editorial URL/content decisions.** Use the table below; do not invent
+2. **Broken-link decisions applied to inactive candidate; visual review remains.**
+   See [applied cleanup and WordPress guide](wordpress-link-cleanup.md). Candidate
+   v3 removes/corrects all seven broken inbound destinations across eight articles;
+   build reports zero broken internal links. Historical 404s remain explicit. Use the table below; do not invent
    translations or redirect missing English translations to Portuguese articles
    just because titles resemble each other. Compare representative captured
    WordPress fixtures with generated prose, poetry, images/captions, aligned text,
