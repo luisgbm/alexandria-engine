@@ -13,6 +13,7 @@
     "redirects": {"type": "object", "additionalProperties": {"type": "string"}},
     "expected_missing": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
     "observed_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-    "banner": {"type": ["string", "null"]}
+    "banner": {"type": ["string", "null"]},
+    "homepage_sidebar_html": {"type": "string", "maxLength": 65536}
   }
 }

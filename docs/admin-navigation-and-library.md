@@ -200,3 +200,49 @@ The 1,095 generated pages passed 24,422 internal-link checks with no missing
 paths. All nine marked articles among the ten current homepage entries were
 checked against their exact cutoff; the tenth uses the fallback. The preceding
 release remains available for rollback. No drafts were promoted.
+
+## Preview-cutoff button and homepage sidebar
+
+In Conteúdo, **Inserir corte da prévia** inserts `<!--more-->` at the current
+HTML-textarea selection, returns focus to the editor and marks the draft as
+changed. Save and publish the article normally. It is disabled for trashed
+content and automatically generated lists.
+
+The separate **Página inicial** page (`/appearance/`) edits the sidebar's HTML.
+**Salvar rascunho da barra lateral** sanitizes and saves a private draft, with
+revision checks and catalog history. **Publicar barra lateral** builds and
+validates a new release using the currently published article snapshot. It does
+not promote article drafts. Publishing an article also preserves the currently
+published sidebar, leaving any sidebar draft private until explicitly published.
+Rollback through Publicações restores the sidebar together with that release;
+its editable draft stays available.
+
+The optional `homepage_sidebar_html` field in site schema v1 stores the markup.
+The generated sidebar always includes the ten latest published articles and
+Brazilian-format publication dates, including on later homepage archive pages.
+On desktop it sits beside the previews; at 52rem and below it appears after the
+previews and pagination. Other article/category pages keep their existing layout.
+Sidebar image-library uploads are copied into the immutable release on sidebar
+publication. Invalid local links or missing images block activation and preserve
+the current release. No sample sidebar text is added to staging.
+
+Old site JSON without this optional field remains supported. After using the
+field, a binary downgrade must restore the matching catalog/schema backup too;
+older strict schema validators do not recognize it.
+
+For a generator-only deployment, root can run `alexandria-engine rebuild --state
+/path/to/state --expected-active RELEASE`. It switches to the service identity,
+locks the publisher and rebuilds the active published snapshot without promoting
+private catalog changes or article drafts. The normal release validation,
+immutable history, atomic activation and rollback checks still apply.
+
+Staging verification: release `release-20261023T185719-6acc4b9058bf` rebuilt the
+published snapshot without changing any private editorial files. Its 1,095 pages
+passed 24,873 internal-link checks with no missing paths; Nginx validation passed.
+Browser checks at 1280px and 390px confirmed desktop columns/mobile stacking,
+ten recent links with dates, and no horizontal overflow. Private screenshots:
+`admin-validation/homepage-sidebar-desktop-20261023.png` and
+`admin-validation/homepage-sidebar-mobile-20261023.png` in the operator backup
+folder. Isolated tests cover cursor insertion, sidebar sanitization and auth/CSRF,
+revision conflicts, article/sidebar draft isolation, sidebar-only image uploads,
+failed-release preservation, generator-only rebuilding and rollback.

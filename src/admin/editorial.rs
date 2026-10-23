@@ -302,7 +302,7 @@ pub(super) async fn trash(
     )?;
     Ok(Json(doc))
 }
-fn catalog_revision(store: &Store) -> Result<String> {
+pub(super) fn catalog_revision(store: &Store) -> Result<String> {
     Ok(digest(&serde_json::to_string(&store.site)?))
 }
 fn save_catalog(store: &mut Store, site: Site) -> Result<()> {
@@ -323,6 +323,50 @@ fn save_catalog(store: &mut Store, site: Site) -> Result<()> {
     publishing::durable_json(&store.root.join("editorial/site.json"), &site)?;
     store.site = site;
     Ok(())
+}
+
+pub(super) async fn homepage(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, false)?;
+    let store = app.store.lock().unwrap();
+    Ok(Json(
+        serde_json::json!({"html":store.site.homepage_sidebar_html,"revision":catalog_revision(&store)?}),
+    ))
+}
+#[derive(Deserialize)]
+pub(super) struct HomepageInput {
+    revision: String,
+    html: String,
+}
+pub(super) async fn save_homepage(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<HomepageInput>,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, true)?;
+    if input.html.len() > 64 * 1024 {
+        return Err(bad("O HTML da barra lateral deve ter até 64 KB."));
+    }
+    let mut store = app.store.lock().unwrap();
+    if catalog_revision(&store)? != input.revision {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "As configurações mudaram. Reabra esta página antes de salvar.".into(),
+        ));
+    }
+    let mut site = store.site.clone();
+    site.homepage_sidebar_html = html::sanitize(&input.html, &site.base_url);
+    save_catalog(&mut store, site)?;
+    audit(
+        &app.db.lock().unwrap(),
+        "homepage_sidebar_saved",
+        "homepage",
+    )?;
+    Ok(Json(
+        serde_json::json!({"html":store.site.homepage_sidebar_html,"revision":catalog_revision(&store)?}),
+    ))
 }
 pub(super) async fn categories(
     State(app): State<Shared>,

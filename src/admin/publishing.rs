@@ -214,6 +214,16 @@ impl Publisher {
         )
     }
     fn deploy(&self, source: &Path, doc: &Document, expected: &str, actor: &str) -> Result<String> {
+        self.deploy_inner(source, Some(doc), None, expected, actor)
+    }
+    fn deploy_inner(
+        &self,
+        source: &Path,
+        doc: Option<&Document>,
+        site_override: Option<&Site>,
+        expected: &str,
+        actor: &str,
+    ) -> Result<String> {
         let _lock = self.lock()?;
         let previous = self.active()?;
         ensure!(
@@ -241,35 +251,55 @@ impl Publisher {
             let content = self.root.join("snapshots").join(&id);
             snapshot(&self.root.join("snapshots").join(&previous), &content)?;
             // Only explicitly selected saved revision is promoted. Other drafts stay private.
-            ensure!(!doc.trashed, "restore trashed content before publishing");
-            if source.join("editorial/site.json").exists() {
+            if let Some(site) = site_override {
+                write_json(&content.join("site.json"), site)?;
+            } else if source.join("editorial/site.json").exists() {
                 fs::copy(
                     source.join("editorial/site.json"),
                     content.join("site.json"),
                 )?;
             }
-            let mut metadata = doc.metadata.clone();
-            metadata.status = "published".into();
-            ensure!(
-                !doc.html.trim().is_empty(),
-                "empty article cannot be published"
-            );
-            let entry = content
-                .join(if metadata.kind == "page" {
-                    "pages"
-                } else {
-                    "articles"
-                })
-                .join(&metadata.id);
-            write_json(&entry.join("metadata.json"), &metadata)?;
-            fs::write(entry.join("body.html"), &doc.html)?;
+            if doc.is_some() && site_override.is_none() {
+                let mut site = read_site(&content.join("site.json"))?;
+                site.homepage_sidebar_html = read_site(
+                    &self
+                        .root
+                        .join("snapshots")
+                        .join(&previous)
+                        .join("site.json"),
+                )?
+                .homepage_sidebar_html;
+                write_json(&content.join("site.json"), &site)?;
+            }
+            if let Some(doc) = doc {
+                ensure!(!doc.trashed, "restore trashed content before publishing");
+                let mut metadata = doc.metadata.clone();
+                metadata.status = "published".into();
+                ensure!(
+                    !doc.html.trim().is_empty(),
+                    "empty article cannot be published"
+                );
+                let entry = content
+                    .join(if metadata.kind == "page" {
+                        "pages"
+                    } else {
+                        "articles"
+                    })
+                    .join(&metadata.id);
+                write_json(&entry.join("metadata.json"), &metadata)?;
+                fs::write(entry.join("body.html"), &doc.html)?;
+            }
             // Refresh passive media from the immutable upload store, without importing drafts.
             let upload_pattern = regex::Regex::new(r"/uploads/[a-f0-9]{64}\.(?:png|jpg)")?;
+            let mut paths = std::collections::BTreeSet::new();
+            let site = read_site(&content.join("site.json"))?;
+            for found in upload_pattern.find_iter(&site.homepage_sidebar_html) {
+                paths.insert(found.as_str().to_string());
+            }
             for entry in load_entries(&content)?
                 .iter()
                 .filter(|e| e.metadata.status == "published")
             {
-                let mut paths = std::collections::BTreeSet::new();
                 for found in upload_pattern.find_iter(&entry.body) {
                     paths.insert(found.as_str().to_string());
                 }
@@ -278,13 +308,13 @@ impl Publisher {
                 {
                     paths.insert(path.clone());
                 }
-                for path in paths {
-                    let source_file = media_file(source, &path)?;
-                    let target = content.join("media").join(relative_path(&path)?);
-                    fs::create_dir_all(target.parent().unwrap())?;
-                    fs::copy(source_file, &target)?;
-                    fs::File::open(target)?.sync_all()?;
-                }
+            }
+            for path in paths {
+                let source_file = media_file(source, &path)?;
+                let target = content.join("media").join(relative_path(&path)?);
+                fs::create_dir_all(target.parent().unwrap())?;
+                fs::copy(source_file, &target)?;
+                fs::File::open(target)?.sync_all()?;
             }
             let output = self.root.join("releases").join(&id);
             crate::build::run(&content, &output)?;
@@ -308,28 +338,31 @@ impl Publisher {
                 id: id.clone(),
                 created_at: now(),
                 actor: actor.into(),
-                article: Some(metadata.id.clone()),
-                revision: Some(doc.revision.clone()),
+                article: doc.map(|d| d.metadata.id.clone()),
+                revision: doc.map(|d| d.revision.clone()),
                 parent: Some(previous),
                 tree_hash: tree_hash(&output.join("public"))?,
             };
-            // Persist historical URL lock before activation, including across rollback/restart.
-            let locked = source
-                .join("editorial")
-                .join(&metadata.id)
-                .join("published-path");
-            let path = metadata
-                .permalink
-                .as_deref()
-                .context("published permalink missing")?;
-            if locked.exists() {
-                ensure!(
-                    fs::read_to_string(&locked)? == path,
-                    "published permalink is immutable"
-                );
-            } else {
-                private_file(&locked, path.as_bytes())?;
-                fs::File::open(locked.parent().unwrap())?.sync_all()?;
+            if let Some(doc) = doc {
+                // Persist historical URL lock before activation, including across rollback/restart.
+                let locked = source
+                    .join("editorial")
+                    .join(&doc.metadata.id)
+                    .join("published-path");
+                let path = doc
+                    .metadata
+                    .permalink
+                    .as_deref()
+                    .context("published permalink missing")?;
+                if locked.exists() {
+                    ensure!(
+                        fs::read_to_string(&locked)? == path,
+                        "published permalink is immutable"
+                    );
+                } else {
+                    private_file(&locked, path.as_bytes())?;
+                    fs::File::open(locked.parent().unwrap())?.sync_all()?;
+                }
             }
             durable_json(
                 &self.root.join("history").join(format!("{id}.json")),
@@ -509,6 +542,15 @@ pub fn console_publish(
     println!("Activated release {active}");
     Ok(())
 }
+/// Rebuild the active published snapshot without promoting private drafts or settings.
+pub fn console_rebuild(state: &Path, expected: &str) -> Result<()> {
+    console_identity(state)?;
+    let p = Publisher::open(state)?.context("publisher not configured")?;
+    let source = p.root.join("snapshots").join(expected);
+    let active = p.deploy_inner(&source, None, None, expected, "root-console:rebuild")?;
+    println!("Activated rebuilt release {active}");
+    Ok(())
+}
 pub fn console_rollback(state: &Path, target: &str, expected: &str) -> Result<()> {
     console_identity(state)?;
     let p = Publisher::open(state)?.context("publisher not configured")?;
@@ -612,6 +654,43 @@ pub(super) async fn publish(
     if let Some(p) = &app.publisher {
         p.sync_store(&mut app.store.lock().unwrap())?;
     }
+    Ok(Json(serde_json::json!({"active":active})))
+}
+pub(super) async fn publish_homepage(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<PublishInput>,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, true)?;
+    let p = configured(&app)?;
+    let guard = app.publish_slots.clone().try_acquire_owned().map_err(|_| {
+        ApiError(
+            StatusCode::CONFLICT,
+            "Já existe uma publicação em andamento.".into(),
+        )
+    })?;
+    let (source, site) = {
+        let store = app.store.lock().unwrap();
+        if editorial::catalog_revision(&store)? != input.revision {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "As configurações mudaram. Reabra esta página antes de publicar.".into(),
+            ));
+        }
+        (store.root.clone(), store.site.clone())
+    };
+    let active = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        p.deploy_inner(
+            &source,
+            None,
+            Some(&site),
+            &input.expected_active,
+            "owner-passkey-session:homepage",
+        )
+    })
+    .await
+    .map_err(anyhow::Error::from)??;
     Ok(Json(serde_json::json!({"active":active})))
 }
 pub(super) async fn rollback(
@@ -784,5 +863,85 @@ mod publishing_tests {
         );
         p.rollback_to("baseline", &active, "test").unwrap();
         assert!(!p.root.join("current/new-page/index.html").exists());
+    }
+    #[test]
+    fn sidebar_publish_isolates_drafts_copies_images_rebuilds_and_rolls_back() {
+        let (_temp, p, content, doc) = setup();
+        let original = fs::read(p.root.join("current/artigos/original/index.html")).unwrap();
+        let mut site = read_site(&content.join("site.json")).unwrap();
+        site.homepage_sidebar_html = "<p>PRIVATE SIDEBAR</p>".into();
+        write_json(&content.join("editorial/site.json"), &site).unwrap();
+        let article_release = p.deploy(&content, &doc, "baseline", "test").unwrap();
+        assert!(
+            !fs::read_to_string(p.root.join("current/index.html"))
+                .unwrap()
+                .contains("PRIVATE SIDEBAR")
+        );
+        p.rollback_to("baseline", &article_release, "test").unwrap();
+        let image = format!("/uploads/{}.png", "a".repeat(64));
+        fs::write(
+            content.join("media").join(relative_path(&image).unwrap()),
+            b"synthetic image",
+        )
+        .unwrap();
+        site.homepage_sidebar_html =
+            format!("<p>PUBLIC SIDEBAR<img src=\"{image}\" alt=\"Test\"></p>");
+        let sidebar_release = p
+            .deploy_inner(&content, None, Some(&site), "baseline", "test:sidebar")
+            .unwrap();
+        let home = fs::read_to_string(p.root.join("current/index.html")).unwrap();
+        assert!(home.contains("PUBLIC SIDEBAR"));
+        assert!(home.contains("Artigos recentes"));
+        assert!(
+            p.root
+                .join("current")
+                .join(relative_path(&image).unwrap())
+                .is_file()
+        );
+        assert_eq!(
+            fs::read(p.root.join("current/artigos/original/index.html")).unwrap(),
+            original
+        );
+        assert_eq!(
+            Store::open(content.clone()).unwrap().entries["wp-1"].revision,
+            doc.revision
+        );
+        assert!(
+            p.deploy_inner(&content, None, Some(&site), "baseline", "test:stale")
+                .is_err()
+        );
+        let mut broken = site.clone();
+        broken.homepage_sidebar_html = "<img src=\"/uploads/missing.png\">".into();
+        assert!(
+            p.deploy_inner(
+                &content,
+                None,
+                Some(&broken),
+                &sidebar_release,
+                "test:broken"
+            )
+            .is_err()
+        );
+        assert_eq!(p.active().unwrap(), sidebar_release);
+        let snapshot = p.root.join("snapshots").join(&sidebar_release);
+        let rebuilt = p
+            .deploy_inner(&snapshot, None, None, &sidebar_release, "test:rebuild")
+            .unwrap();
+        assert!(
+            fs::read_to_string(p.root.join("current/index.html"))
+                .unwrap()
+                .contains("PUBLIC SIDEBAR")
+        );
+        assert!(
+            !fs::read_to_string(p.root.join("current/index.html"))
+                .unwrap()
+                .contains("PRIVATE SIDEBAR")
+        );
+        p.rollback_to("baseline", &rebuilt, "test").unwrap();
+        assert!(
+            !fs::read_to_string(p.root.join("current/index.html"))
+                .unwrap()
+                .contains("PUBLIC SIDEBAR")
+        );
     }
 }

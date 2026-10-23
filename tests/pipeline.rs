@@ -212,6 +212,10 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
         )
         .unwrap();
     }
+    let mut site = read_site(&content.join("site.json")).unwrap();
+    site.homepage_sidebar_html =
+        "<p>Custom <strong>sidebar</strong></p><script>unsafe()</script>".into();
+    write_json(&content.join("site.json"), &site).unwrap();
     let release = root.join("release");
     build::run(&content, &release).unwrap();
     let home = fs::read_to_string(release.join("public/index.html")).unwrap();
@@ -221,6 +225,40 @@ fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
     assert!(!home.contains("SECRET DRAFT"));
     assert!(home.contains("/page/2/"));
     assert!(release.join("public/page/2/index.html").exists());
+    use kuchiki::traits::TendrilSink;
+    let parsed = kuchiki::parse_html().one(home.clone());
+    let aside = parsed.select_first("aside.home-sidebar").unwrap();
+    assert!(
+        aside
+            .as_node()
+            .to_string()
+            .contains("<strong>sidebar</strong>")
+    );
+    assert!(!aside.as_node().to_string().contains("unsafe()"));
+    assert_eq!(aside.as_node().select("li").unwrap().count(), 10);
+    assert_eq!(aside.as_node().select("time").unwrap().count(), 10);
+    assert_eq!(
+        aside
+            .as_node()
+            .select_first("a")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href"),
+        Some("/preview-11/")
+    );
+    assert!(home.find("home-main").unwrap() < home.find("home-sidebar").unwrap());
+    let page_two = kuchiki::parse_html()
+        .one(fs::read_to_string(release.join("public/page/2/index.html")).unwrap());
+    assert_eq!(
+        page_two
+            .select_first("aside a")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href"),
+        Some("/preview-11/")
+    );
 }
 
 #[test]

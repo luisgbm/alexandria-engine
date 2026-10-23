@@ -1630,3 +1630,86 @@ async fn automatic_permalinks_reserve_redirects_attachments_trash_and_published_
             .starts_with("/feed-")
     );
 }
+
+#[tokio::test]
+async fn homepage_settings_require_auth_csrf_sanitize_and_preserve_private_drafts() {
+    let (temp, app) = fixture();
+    let (status, _, _) = call(
+        &app,
+        "GET",
+        "/api/homepage",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (cookie, csrf) = authenticated(&app);
+    let (_, _, settings) = call(
+        &app,
+        "GET",
+        "/api/homepage",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    let payload = serde_json::json!({"revision":settings["revision"],"html":"<p>Sidebar <strong>HTML</strong></p><script>evil()</script><img src='/uploads/a.png' onerror='evil()'>"});
+    let (status, _, _) = call(
+        &app,
+        "PUT",
+        "/api/homepage",
+        Some(&cookie),
+        None,
+        payload.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, saved) = call(
+        &app,
+        "PUT",
+        "/api/homepage",
+        Some(&cookie),
+        Some(&csrf),
+        payload.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let text = saved["html"].as_str().unwrap();
+    assert!(text.contains("<strong>HTML</strong>"));
+    assert!(!text.contains("evil"));
+    let (status, _, _) = call(
+        &app,
+        "PUT",
+        "/api/homepage",
+        Some(&cookie),
+        Some(&csrf),
+        payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let root = temp.path().join("content");
+    assert_eq!(
+        Store::open(root.clone())
+            .unwrap()
+            .site
+            .homepage_sidebar_html,
+        text
+    );
+    assert!(
+        read_site(&root.join("site.json"))
+            .unwrap()
+            .homepage_sidebar_html
+            .is_empty()
+    );
+    let (status, _, _) = call(
+        &app,
+        "POST",
+        "/api/homepage/publish",
+        Some(&cookie),
+        None,
+        serde_json::json!({"revision":saved["revision"],"expected_active":"baseline"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
