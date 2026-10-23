@@ -86,4 +86,6 @@ There is no public web recovery endpoint. Both root-console access and the curre
 offline secret are required. The existing DPAPI export is tied to this Windows
 account/profile: the drill verified lost-passkey recovery while that profile is
 available, not recovery after losing the entire Windows profile. A separately
-managed portable offline copy remains necessary for that scenario.
+managed portable offline copy remains necessary for that scenario. A
+[portable encrypted copy](portable-admin-recovery.md) has now been created and
+verified on Linux; physical placement on offline media is a separate handoff.

@@ -136,6 +136,7 @@ does not prove that every URL ever published has been discovered.
 - [Editorial workflow: pages, categories, tags, history and trash](docs/editorial-workflow.md)
 - [Admin staging and enrollment](docs/admin-staging.md)
 - [Lost-key recovery drill](docs/admin-recovery-drill.md)
+- [Portable offline admin recovery](docs/portable-admin-recovery.md)
 - [Dependency license inventory](docs/dependency-licenses.md)
 - [Encrypted backups and restore](docs/backup-restore.md)
 
