@@ -338,3 +338,17 @@ stylesheet was replaced by its content-versioned URL in the same browser session
 Private screenshots are `admin-validation/responsive-menu-desktop-20261023.png`,
 `responsive-menu-mobile-closed-20261023.png` and
 `responsive-menu-mobile-open-20261023.png` under the operator backup folder.
+
+## Full-width standalone content
+
+Standalone page/article `.entry-content` uses its full parent width instead of
+the former 50rem cap. At 1280px that cap had left 240px of unused space inside
+the 1040px content container. The homepage's `.home-layout` sidebar grid and its
+mobile stacking are unchanged. The site's outer 68rem container is preserved.
+
+Verified on staging release `release-20261023T194406-7221c082717d`: Autor and
+article content measured 1040px inside a 1040px container at a 1280px viewport;
+mobile content matched its 343.2px container without overflow. The homepage kept
+its 720px/288px columns. Build validation passed 23,912 internal-link checks and
+Nginx validation passed. Screenshot: private
+`admin-validation/standalone-page-width-20261023.png`.
