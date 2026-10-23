@@ -61,7 +61,7 @@ server {
     server_tokens off;
     client_max_body_size 10m;
     access_log off;
-    error_log /var/log/nginx/alexandria-admin-staging-error.log warn;
+    error_log /dev/null crit;
     location / {
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
