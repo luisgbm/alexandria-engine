@@ -263,3 +263,12 @@ is the landing page; each feature has its own URL. The active staging release
 is now `staging-library-pages-20261023`, with clean-v3 retained for rollback.
 The owner accepted the current content set and phone search; production remains
 on hold. Environment identity can be configured independently of host/provider.
+
+
+## Empty-trash compatibility
+
+The content portal now has a typed-confirmation **Esvaziar lixeira** action. See
+[its deletion boundaries and recovery notes](admin-navigation-and-library.md#emptying-the-editorial-trash).
+Preserve `content/editorial/purged.json` in backups/restores. After the first
+purge, do not downgrade the admin executable to a version that ignores this
+ledger; public static release rollback remains independent and safe.

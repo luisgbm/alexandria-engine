@@ -99,3 +99,35 @@ without duplication, removal/restore, all feature navigation and browser history
 The image page was checked at 390 pixels with no horizontal overflow. The initial
 native confirmation was replaced with inline confirmation and the final removal
 and restore flow passed without a browser popup. No fixture article was published.
+
+## Emptying the editorial trash
+
+On **Conteúdo**, select **Lixeira** and click **Esvaziar lixeira**. The control is
+enabled when the trash contains entries. The dialog lists every trashed entry,
+including those excluded by the current text search. Type **ESVAZIAR LIXEIRA**,
+then select **Excluir definitivamente**, or cancel without changing anything.
+
+This removes the entries from the editorial catalog and deletes their private
+editorial revision directories. There is no restore-from-trash action afterward.
+It does not unpublish existing static pages, remove images, rewrite release
+snapshots/history, erase imported source archives, or destroy backups. Source
+imports and published release history can still contain old content; this is
+not a secure-erasure feature. An operator may recover data from a suitable backup.
+
+The authenticated/CSRF-protected `/api/trash` operation checks an exact revision
+of the trash list. If another tab restores, edits or trashes an entry after the
+dialog opens, confirmation is rejected before any deletion. A durable private
+`content/editorial/purged.json` ledger prevents imported originals or interrupted
+cleanup from reappearing after a restart. The ledger is covered by content backups.
+If the response reports pending file cleanup, logical deletion has committed;
+review the private editorial files as the operator instead of repeating deletion.
+
+Public release rollback is independent of this operation and remains available.
+Do not roll back to an older admin executable that predates the purge ledger
+against the new state: it would ignore the ledger and could redisplay imported
+entries. Full restoration of older state is a deliberate recovery operation.
+
+The staging update was tested against disposable content: exact confirmation,
+authentication/CSRF, stale-list rejection, survival of non-trashed drafts and
+images, editorial revision cleanup, and persistence across reopening the store.
+The existing staging trash was not emptied during deployment.

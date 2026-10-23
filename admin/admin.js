@@ -188,6 +188,7 @@
   function renderEntries() {
 
     const query=normalize($("filter").value), filter=$("status-filter").value;
+    $("empty-trash").hidden=filter!=="trash";$("empty-trash").disabled=!entries.some(e=>e.trashed);
 
     const visible=entries.filter(e => normalize(e.title+" "+(e.tags||[]).join(" ")).includes(query) && (filter==="trash" ? e.trashed : !e.trashed) && (filter==="trash" || filter==="all" || (filter==="page" ? e.kind==="page" : filter==="draft" ? e.has_saved_draft : e.status==="published"))).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
 
@@ -306,6 +307,29 @@
     const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}/trash`,{method:"POST",body:JSON.stringify({revision:doc.revision,trashed:!doc.trashed})});
     setDocument(result);await refreshEntries();notice(result.trashed ? "Conteúdo movido para a lixeira. O site não mudou." : "Conteúdo restaurado da lixeira.");
   });
+  let trashRevision="";
+  $("empty-trash").onclick=()=>busy($("empty-trash"),async()=>{
+    if(dirty)throw new Error("Salve ou descarte as alterações antes de esvaziar a lixeira.");
+    const data=await api("/api/trash");trashRevision=data.revision;
+    $("empty-trash-items").replaceChildren();for(const item of data.items){const li=document.createElement("li");li.textContent=item.title;$("empty-trash-items").append(li);}
+    $("empty-trash-confirmation").value="";$("confirm-empty-trash").disabled=true;
+    $("empty-trash-status").textContent=`${data.items.length} item(ns) na lixeira inteira, incluindo itens fora da busca atual.`;
+    if(!data.items.length){await refreshEntries();notice("A lixeira já está vazia.");return;}
+    $("empty-trash-dialog").showModal();
+  });
+  $("cancel-empty-trash").onclick=()=>$("empty-trash-dialog").close();
+  $("empty-trash-confirmation").oninput=()=>{$("confirm-empty-trash").disabled=$("empty-trash-confirmation").value!=="ESVAZIAR LIXEIRA";};
+  $("empty-trash-form").onsubmit=async event=>{
+    event.preventDefault();const button=$("confirm-empty-trash");button.disabled=true;$("cancel-empty-trash").disabled=true;
+    try{
+      const result=await api("/api/trash",{method:"POST",body:JSON.stringify({revision:trashRevision,confirmation:$("empty-trash-confirmation").value})});
+      $("empty-trash-dialog").close();
+      if(doc?.trashed){doc=null;dirty=false;$("editor").hidden=true;$("empty").hidden=false;$("preview").srcdoc="";clearTimeout(previewTimer);previewGeneration++;}
+      await refreshAfterSuccess(`${result.deleted} item(ns) excluído(s) da lixeira. Páginas publicadas e imagens foram preservadas.${result.cleanup_pending ? " A limpeza de arquivos privados precisa de revisão pelo operador." : ""}`,refreshEntries);
+    }catch(error){$("empty-trash-status").textContent=error.message;}
+    finally{button.disabled=$("empty-trash-confirmation").value!=="ESVAZIAR LIXEIRA";$("cancel-empty-trash").disabled=false;}
+  };
+
   async function loadCategories(){
     const result=await api("/api/categories");catalogRevision=result.revision;categories=result.categories;$("category-list").replaceChildren();
     for(const category of categories){const li=document.createElement("li"),name=document.createElement("input"),rename=document.createElement("button"),remove=document.createElement("button"),info=document.createElement("small");
