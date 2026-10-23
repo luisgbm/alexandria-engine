@@ -12,6 +12,8 @@ FIXTURES = {
     'art-5fc8b71f4627469ba0d6f745a1644903': '/artigos/novo-5fc8b71f4627/',
     'art-1d22ab8ac293471498b3968fdf8fa71d': '/artigos/aceitacao-desktop-celular-20261023/',
 }
+# Owner confirmed these imported drafts were deleted in WordPress.
+RETIRED_DRAFTS = {'wp-2721', 'wp-2731', 'wp-2747', 'wp-2414', 'wp-3041'}
 IMAGES = [
     '1a92e094ee5515ae7dd7d958e6340d50b2ae532b444553a3f0219dc702ad1b30.png',
     '80edd4c00a9f95b6ea9bfee448f4ee7796b5d49d5a93d994ed8f8ea2904405dc.png',
@@ -45,6 +47,13 @@ def main():
             parser.error('snapshot must not contain symlinks')
     excluded = {f'{folder}/{identity}' for folder in ['articles', 'pages'] for identity in FIXTURES}
     excluded.update('media/uploads/' + name for name in IMAGES)
+    for identity in RETIRED_DRAFTS:
+        for folder in ['articles', 'pages']:
+            metadata = source / folder / identity / 'metadata.json'
+            if metadata.exists():
+                assert json.loads(metadata.read_text(encoding='utf-8'))['status'] == 'draft', identity
+            excluded.add(f'{folder}/{identity}')
+        excluded.add(f'revisions/{identity}')
     retained = {}
     removed = []
     output.mkdir(mode=0o700, parents=True)
@@ -65,20 +74,23 @@ def main():
             assert digest(destination) == retained[relative], relative
     # Preserve imported revision history; native test revision histories stay on staging.
     if (imported / 'revisions').exists() and not (content / 'revisions').exists():
-        shutil.copytree(imported / 'revisions', content / 'revisions')
+        shutil.copytree(imported / 'revisions', content / 'revisions',
+                        ignore=lambda directory, names: RETIRED_DRAFTS.intersection(names)
+                        if Path(directory) == imported / 'revisions' else set())
     counts = {}
     identities = set()
     for folder in ['articles', 'pages']:
         for path in (content / folder).glob('*/metadata.json'):
             metadata = json.loads(path.read_text(encoding='utf-8'))
-            assert metadata['id'] not in FIXTURES
+            assert metadata['id'] not in FIXTURES and metadata['id'] not in RETIRED_DRAFTS
             identities.add(metadata['id'])
             key = folder + ':' + metadata['status']
             counts[key] = counts.get(key, 0) + 1
     original_ids = {json.loads(p.read_text(encoding='utf-8'))['id']
                     for folder in ['articles', 'pages']
                     for p in (imported / folder).glob('*/metadata.json')}
-    assert original_ids <= identities, 'imported content would be lost'
+    assert original_ids - RETIRED_DRAFTS <= identities, 'retained imported content would be lost'
+    assert not RETIRED_DRAFTS.intersection(identities)
     # Fail instead of creating dangling image/URL references in retained live content.
     for folder in ['articles', 'pages']:
         for path in (content / folder).rglob('*'):
@@ -91,7 +103,8 @@ def main():
               'content': str(content), 'excluded_document_ids': list(FIXTURES),
               'excluded_image_names': IMAGES, 'removed_snapshot_files': removed,
               'retained_snapshot_files_verified': len(retained),
-              'imported_documents_preserved': len(original_ids), 'counts': counts,
+              'retired_draft_ids': sorted(RETIRED_DRAFTS),
+              'imported_documents_preserved': len(original_ids - RETIRED_DRAFTS), 'counts': counts,
               'manifest': manifest}
     (output / 'preparation-report.json').write_text(
         json.dumps(report, indent=2) + '\n', encoding='utf-8')

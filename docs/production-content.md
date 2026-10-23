@@ -3,15 +3,17 @@
 Prepared on alexandria on 2026-10-23, without activation or DNS/original-site changes.
 The private candidate directory is:
 
-`/var/lib/alexandria-production-candidate/20261023-clean-v1`
+`/var/lib/alexandria-production-candidate/20261023-clean-v2`
 
 - `content/`: independent portable content copy, including imported revision history.
 - `release/public/`: validated static output, not configured in any Nginx vhost.
 - `preparation-report.json`: exclusion list and SHA-256 manifest of retained content.
 - `verification-report.json`: preservation and fixture-exclusion checks.
 
-The candidate contains 444 published articles, five published pages and five
-original WordPress drafts. Those five drafts remain private and are not generated.
+The candidate contains 444 published articles, five published pages and zero
+drafts. The owner confirmed that the five imported drafts had already been deleted
+in WordPress; their document directories and revision histories are excluded from
+this production candidate. The earlier v1 candidate and staging remain intact.
 The build passed with 449 published entries, 1,094 static pages and seven already
 known broken destinations. Those URL decisions remain a separate readiness gate.
 
@@ -55,7 +57,7 @@ python3 /path/to/prepare-production-content.py \
 ```
 
 The script refuses existing/overlapping output directories and mutable editorial
-snapshots, preserves all imported document IDs, checks copied hashes, and rejects
+snapshots, preserves all retained imported document IDs, checks copied hashes, and rejects
 retained article references to excluded fixture paths/images. It never activates
 a release or modifies its source. A failed candidate remains private for diagnosis.
 
@@ -68,8 +70,10 @@ database. Final authentication setup and backup are separate launch tasks.
 
 ## Verification performed
 
-- Verified 4,672 candidate content files against the recorded SHA-256 manifest.
-- Preserved every imported document ID (454, including five original drafts).
+- Preserved all 449 published imported document IDs; zero drafts remain.
+- Excluded retired draft IDs `wp-2414`, `wp-2721`, `wp-2731`, `wp-2747`,
+  `wp-3041` and their revision histories.
+- Confirmed generated public files are byte-for-byte identical to v1.
 - Found zero fixture IDs, paths or image names in generated HTML/JSON/XML/text.
 - Confirmed fixture pages/uploads absent from candidate public output.
 - Confirmed all four staging drafts and three staging image files still exist.
