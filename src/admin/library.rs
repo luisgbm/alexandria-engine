@@ -11,6 +11,8 @@ struct ImageMetadata {
     deleted: bool,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    uploaded_at: Option<i64>,
 }
 type Catalog = BTreeMap<String, ImageMetadata>;
 
@@ -51,8 +53,17 @@ fn save(root: &Path, data: &Catalog) -> Result<()> {
 
 pub(super) fn uploaded(root: &Path, path: &str, name: &str) -> Result<()> {
     let mut data = catalog(root)?;
+    let uploaded_at = Utc::now().timestamp_millis().max(
+        data.values()
+            .filter_map(|m| m.uploaded_at)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
     let item = data.entry(path.into()).or_default();
     item.deleted = false;
+    // Persist upload order independently of hash-based filenames and filesystem copies.
+    item.uploaded_at = Some(uploaded_at);
     if item.name.is_empty() {
         item.name = name.chars().take(300).collect();
     }
@@ -69,7 +80,7 @@ pub(super) struct Browse {
     deleted: bool,
 }
 
-fn images(root: &Path, directory: &Path, rows: &mut Vec<String>) -> Result<()> {
+fn images(root: &Path, directory: &Path, rows: &mut Vec<(String, i64)>) -> Result<()> {
     if !directory.exists() {
         return Ok(());
     }
@@ -87,12 +98,22 @@ fn images(root: &Path, directory: &Path, rows: &mut Vec<String>) -> Result<()> {
                 .unwrap_or("")
                 .to_ascii_lowercase();
             if ["jpg", "jpeg", "png", "gif", "webp", "avif", "ico"].contains(&ext.as_str()) {
-                rows.push(public_path(&format!(
-                    "/{}",
-                    path.strip_prefix(root)?
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                )));
+                let modified = item
+                    .metadata()?
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                rows.push((
+                    public_path(&format!(
+                        "/{}",
+                        path.strip_prefix(root)?
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    )),
+                    modified,
+                ));
             }
         }
     }
@@ -113,7 +134,15 @@ pub(super) async fn list(
     let mut paths = Vec::new();
     let media = store.root.join("media");
     images(&media, &media, &mut paths)?;
-    paths.sort();
+    paths.sort_by(|(a, a_modified), (b, b_modified)| {
+        let stamp = |path: &str, modified: i64| {
+            let recorded = data.get(path).and_then(|m| m.uploaded_at);
+            (recorded.is_some(), recorded.unwrap_or(modified))
+        };
+        stamp(b, *b_modified)
+            .cmp(&stamp(a, *a_modified))
+            .then_with(|| a.cmp(b))
+    });
     let attachments: Vec<Attachment> = if store.root.join("attachments.json").exists() {
         read_json(&store.root.join("attachments.json"))?
     } else {
@@ -121,14 +150,14 @@ pub(super) async fn list(
     };
     let defaults: BTreeMap<_, _> = attachments.iter().map(|a| (a.path.as_str(), a)).collect();
     let normalized = crate::build::normalize(&query.q);
-    let rows: Vec<_> = paths.iter().filter_map(|path| {
+    let rows: Vec<_> = paths.iter().filter_map(|(path, _)| {
         let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
         let fallback = defaults.get(path.as_str()).or_else(|| defaults.get(decoded.as_ref())).map(|a| ImageMetadata {
-            alt: a.alt.clone(), caption: html::text(&a.caption), name: a.title.clone(), deleted: false,
+            alt: a.alt.clone(), caption: html::text(&a.caption), name: a.title.clone(), deleted: false, uploaded_at: None,
         }).unwrap_or_default();
         let meta = data.get(path).unwrap_or(&fallback);
         if meta.deleted != query.deleted || !crate::build::normalize(&format!("{} {} {} {} {}", path, decoded, meta.name, meta.alt, meta.caption)).contains(&normalized) { return None; }
-        Some(serde_json::json!({"path":path,"name":meta.name,"alt":meta.alt,"caption":meta.caption,"deleted":meta.deleted}))
+        Some(serde_json::json!({"path":path,"name":meta.name,"alt":meta.alt,"caption":meta.caption,"deleted":meta.deleted,"uploaded_at":meta.uploaded_at}))
     }).collect();
     let total = rows.len();
     Ok(Json(
@@ -170,6 +199,7 @@ pub(super) async fn update(
             caption: input.caption,
             deleted: input.deleted,
             name: old.name,
+            uploaded_at: old.uploaded_at,
         },
     );
     save(&store.root, &data)?;

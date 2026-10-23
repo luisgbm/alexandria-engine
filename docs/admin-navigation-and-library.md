@@ -131,3 +131,20 @@ The staging update was tested against disposable content: exact confirmation,
 authentication/CSRF, stale-list rejection, survival of non-trashed drafts and
 images, editorial revision cleanup, and persistence across reopening the store.
 The existing staging trash was not emptied during deployment.
+
+## Upload ordering and refresh
+
+The library lists newest uploads first, before splitting results into pages of
+48 images. Upload times are stored in the private catalog and survive restarts
+and metadata edits. Existing images without a recorded upload time use their
+file modification time as a fallback; exact original upload times cannot be
+recovered from those files alone. Recorded uploads appear before those older
+untracked assets. Re-uploading identical bytes keeps one image and its saved
+alt text/caption, but moves it to the top as the most recent upload.
+
+After a successful upload the browser cancels pending search refreshes, clears
+the search/removed-image filter, returns to page one and refreshes the grid
+before opening the uploaded image's metadata. If the upload succeeds but the
+refresh fails, the message says so rather than implying the upload failed.
+Regression coverage exercises more than one page, restart persistence, caption
+edits, duplicate uploads, and upload refresh with a pending search.
