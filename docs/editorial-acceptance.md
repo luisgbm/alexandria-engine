@@ -23,7 +23,7 @@ remain unchanged. The reference active release is
 | Authenticated admin access | Passed | Phone passkey login previously confirmed |
 | Article editing and saved persistence | Passed, including reload | Saved phone marker verified on server and after desktop reload |
 | Image upload, alt text and caption | Passed | Phone JPEG, alt text and caption verified in saved draft |
-| Live preview | Passed at desktop/narrow preview widths | Pending |
+| Live preview | Passed at desktop/narrow preview widths | User reports phone validation complete; no separate timing/visual measurement recorded |
 | Publish using admin controls | Passed | User confirmed publication; feedback delay reported |
 | Generated page, image, feed, sitemap and search | Passed | 12 HTTP checks passed, including phone marker and cat JPEG/alt/caption |
 | Rollback using admin controls | Passed | User confirmed; screenshot shows restored baseline and success |
@@ -84,8 +84,8 @@ for a reload rather than implying the mutation failed.
 The deployed admin was reloaded in the authenticated browser. Saving the unchanged
 phone draft showed **Salvando rascunho…**, followed by the visible fixed success
 banner; screenshot `acceptance-status-banner.png` is stored in the private
-validation folder. The phone publication remains active; physical-phone feedback
-confirmation and rollback to the reference release are still pending. No original
+validation folder. At that point the phone publication remained active; the subsequent physical-phone
+rollback and feedback confirmation are recorded in the following section. No original
 website or DNS changes were made.
 
 ## Physical-phone rollback and banner width

@@ -1,15 +1,86 @@
-# Operator manual — foundation and private staging
+# Operator manual
 
-This document covers local import/build and the private staging server.
-The production provisioning, WebAuthn, analytics, backup automation, activation,
-rollback, and full VPS recovery chapters remain to be implemented.
+## Current operating boundary — 2026-10-23
 
-## Server boundary
+Use `ssh alexandria`. The original WordPress server and DNS remain unchanged.
+The static staging site is http://52.153.234.132/ and its administrator is
+https://admin.52-153-234-132.sslip.io/. Neither needs an SSH tunnel. The Rust
+administrator listens only on `127.0.0.1:3001`, behind Nginx HTTPS, as the
+unprivileged `alexandria-admin` user.
 
-Use `ssh alexandria` for the new website. Do not deploy to the original WordPress
-server or change its DNS/Nginx while validating this migration. Staging runs on
-the new Ubuntu host, using packaged Nginx and a static release. No WordPress
-runtime, administrator service, or private content store is deployed there.
+The current acceptance baseline is `staging-20261022T225033-d7d27da8ff2a`.
+Always inspect `/srv/alexandria/staging/current`; never infer the active version
+from a historical setup example. Its destination must end in `/public`.
+
+## Operations index
+
+- [Readiness findings and launch gates](production-readiness.md).
+- [Admin setup, authentication and HTTPS](admin-staging.md).
+- [Article/page/category editing, revisions and trash](editorial-workflow.md).
+- [Publishing, atomic activation and rollback](staging-publishing.md).
+- [Desktop and physical-phone acceptance](editorial-acceptance.md).
+- [Encrypted monthly PC backups and application restore drill](backup-restore.md).
+- [Lost-key recovery drill](admin-recovery-drill.md).
+- [Portable offline recovery copy](portable-admin-recovery.md).
+- [Analytics ingestion, rotation and retention](analytics-staging.md).
+- [WordPress inventory and known broken links](migration-inventory.md).
+
+Production hostname transition and a fresh-VPS restore rehearsal remain launch
+work. Staging credentials and recovery artifacts must not be copied blindly to a
+new WebAuthn relying-party hostname. Bootstrap the final hostname, enroll two
+passkeys, and export corresponding recovery material before relying on it.
+
+## Routine health checks
+
+Run on alexandria; do not print credentials, cookies or raw access/error logs:
+
+```sh
+sudo su
+nginx -t
+systemctl is-active nginx alexandria-admin-staging.service
+systemctl --failed --no-pager
+readlink /srv/alexandria/staging/current
+ss -ltn
+systemctl list-timers alexandria-analytics.timer alexandria-backup.timer certbot.timer
+certbot certificates
+df -h /
+```
+
+From the PC/source workspace, read-only probes produce private evidence:
+
+```powershell
+python scripts/validate_readiness.py --output C:/Users/luisg/Backups/culturaespiritual/admin-validation/readiness-http.json
+python scripts/validate_editorial_acceptance.py --output C:/Users/luisg/Backups/culturaespiritual/admin-validation/acceptance-rollback.json
+Get-ScheduledTask -TaskName 'Alexandria Encrypted Off-server Backup' | Get-ScheduledTaskInfo
+```
+
+The second command assumes the acceptance baseline has been restored. Do not run
+it as an expectation against an intentionally published acceptance article.
+For complete URL validation use `scripts/validate_staging.py` with the **matching
+active release and its published content snapshot**, rather than today's private
+drafts. The script rejects the production origin and does not follow redirects.
+
+## Incidents
+
+- Failed build: leave the existing active release intact, inspect private build
+  reports, correct the saved input and retry. Do not overwrite immutable output.
+- Bad publication: restore a known retained release through the authenticated
+  admin; wait for success and verify the expected URLs. Drafts remain saved.
+- Admin unavailable: check service status and configuration; static pages remain
+  available independently. Restart the admin service only after diagnosis.
+- Lost passkey: use the second authenticator first. Use the documented root-only
+  recovery procedure if necessary; it revokes old credentials and sessions.
+- Backup failure: inspect the private backup task report and last successful
+  off-server copy; a running timer alone does not prove a fresh usable backup.
+- Suspected compromise: preserve private evidence, isolate affected access, and
+  follow the recovery runbook from a trusted console; do not publish raw logs.
+
+## Historical foundation instructions
+
+The following setup/tunnel examples document the initial private foundation.
+They are retained for provenance, **not the current access or redeployment path**.
+Do not rerun the initial installer against the existing deployment. In particular,
+stopping Nginx now interrupts both public staging and HTTPS administration.
 
 ## Preserve inputs
 
@@ -46,7 +117,7 @@ Do not switch public DNS or the active release until the staging checks and
 recovery rehearsal pass. The foundation CLI prepares immutable releases; it
 does not implement the production release switch or rollback.
 
-## Current private staging
+## Historical foundation setup (superseded)
 
 The staging release is `/srv/alexandria/staging/releases/20261022-foundation-v3`.
 The document root symlink `/srv/alexandria/staging/current` points only to that
@@ -101,7 +172,7 @@ fourth argument supplies regenerated `ops/` files when reusing public payload
 whose complete hashes have been verified identical. Never overwrite an active
 release in place.
 
-## Repeat HTTP validation
+## Historical tunnel validation (superseded)
 
 With the SSH tunnel open, run from the source workspace:
 

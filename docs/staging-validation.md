@@ -1,5 +1,10 @@
 # Private staging deployment and validation — 2026-10-22
 
+> Historical checks below describe their recorded phase. For current acceptance and
+> remaining launch gates, see [production readiness](production-readiness.md) and
+> [editorial acceptance](editorial-acceptance.md). Earlier tunnel-only and pending
+> publishing/mobile statements are superseded by those later records.
+
 Status: passed. Deployed only to the host reached by `ssh alexandria`. The
 original WordPress server was not accessed or changed, and no DNS changes were
 made. This is a private staging deployment, not a public launch.

@@ -1,5 +1,10 @@
 # Private admin staging
 
+> Historical checks below describe their recorded phase. For current acceptance and
+> remaining launch gates, see [production readiness](production-readiness.md) and
+> [editorial acceptance](editorial-acceptance.md). Earlier tunnel-only and pending
+> publishing/mobile statements are superseded by those later records.
+
 Deployed 2026-10-22 on `ssh alexandria`. The original website and DNS were not
 changed. The existing static release remains `20261022-foundation-v3`.
 

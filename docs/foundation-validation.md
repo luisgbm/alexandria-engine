@@ -1,5 +1,10 @@
 # Foundation validation — 2026-10-22
 
+> Historical checks below describe their recorded phase. For current acceptance and
+> remaining launch gates, see [production readiness](production-readiness.md) and
+> [editorial acceptance](editorial-acceptance.md). Earlier tunnel-only and pending
+> publishing/mobile statements are superseded by those later records.
+
 The first importer/generator implementation was exercised locally against the
 preserved 2026-10-22 WordPress backup and captured public-page inventory. No
 connection to the original WordPress server was used for this implementation.
