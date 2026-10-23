@@ -1,6 +1,42 @@
 # Production readiness pass — 2026-10-23
 
-## Verdict and scope
+## Current status — editorial update, 2026-10-23
+
+Production remains on hold at the owner's request. The report below is a
+historical readiness pass; use these updates together with later hardening,
+recovery and portable-deployment evidence.
+
+- The owner accepts the 449-item content set as stable. Further WordPress delta
+  reconciliation is not an outstanding task under the current scope.
+- Physical phone search is accepted: the owner tested it and reported good,
+  fast results. A numerical performance benchmark was not requested.
+- Environment identity is configurable through `ALEXANDRIA_ENVIRONMENT` and
+  optional `ALEXANDRIA_RP_NAME`. API flags, labels and confirmations follow it.
+  The current service remains staging. Generic `init-publisher`, `publish` and
+  `rollback` commands retain the previous staging command names as aliases.
+- The admin landing page is statistics. Content, images, categories,
+  publications and security have separate URLs and navigation.
+- A private, browsable image library replaces featured-image controls. Alt text,
+  captions, copy-link/copy-HTML, insertion and recoverable removal are available.
+  Legacy featured images are preserved as explicit HTML when saved in the new
+  editor; compatibility preview does not duplicate body images.
+- The static homepage now shows excerpts for the latest ten articles, with
+  dates, permanent article links and pagination.
+- New staging release: `staging-library-pages-20261023`; previous clean-v3 is
+  retained for rollback. All 1,094 generated HTML paths returned 200; all six
+  admin page URLs worked and private APIs denied unauthenticated access.
+  Linux tests passed (27 tests, plus one intentionally ignored root-only recovery
+  test), as did locked Clippy and formatting checks.
+- The clean production content candidate is unchanged. The new synthetic library
+  image is explicitly excluded by `prepare-production-content.py` and remains
+  private on staging with the other fixtures.
+
+See [admin pages and image library](admin-navigation-and-library.md) for the
+current workflow and [portable deployment](portable-deployment.md) for new VPS
+installation. Final production provisioning, final-domain TLS/passkeys/recovery,
+analytics policy/notifications and cutover remain deferred.
+
+## Historical verdict and scope
 
 **Staging functional acceptance passed; production activation is not ready.**
 This pass inspected alexandria and the source/validation records, reran tests and

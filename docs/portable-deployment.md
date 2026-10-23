@@ -94,10 +94,14 @@ bootstrap URL or recovery secret into tickets/chat. Enroll two passkeys and put
 a portable recovery copy offline. Changing the admin hostname requires new
 passkeys; copying a database does not change its relying-party identity.
 
-The engine's publishing CLI and some UI text still use the historical word
-“staging.” The configured publisher root/public URL determine the target; do not
-infer the target from that label. This deployment work does not activate
-production or finish the remaining product wording work.
+The installer passes `ALEXANDRIA_ENVIRONMENT=staging|production` to the admin
+service. This controls its environment badge, API flags, publish/rollback
+confirmations and default passkey display name. For another display name, set
+`ALEXANDRIA_RP_NAME` in the instance's systemd environment; this does not change
+the relying-party ID or origin. Both must continue matching initialized state.
+Use `init-publisher`, `publish` and `rollback`; the old `*-staging` command names
+remain compatible aliases. Setting a production label does not perform a DNS
+cutover, provision certificates, migrate passkeys or activate production.
 
 ## Backup and PC copy
 

@@ -12,7 +12,7 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     #[cfg(unix)]
-    /// Incrementally ingest staging-only structured Nginx logs.
+    /// Incrementally ingest structured Nginx logs.
     AnalyticsIngest {
         #[arg(long)]
         site_root: PathBuf,
@@ -22,7 +22,7 @@ enum Command {
         state: PathBuf,
     },
     #[cfg(unix)]
-    /// Run the private, loopback-only staging administration service.
+    /// Run the private, loopback-only administration service.
     ServeAdmin {
         #[arg(long)]
         content: PathBuf,
@@ -36,7 +36,8 @@ enum Command {
         rp_id: String,
     },
     #[cfg(unix)]
-    /// Initialize staging release history without changing the active release.
+    /// Initialize release history without changing the active release.
+    #[command(name = "init-publisher", alias = "init-staging-publisher")]
     InitStagingPublisher {
         #[arg(long)]
         content: PathBuf,
@@ -48,7 +49,8 @@ enum Command {
         public_url: String,
     },
     #[cfg(unix)]
-    /// Publish one saved revision on staging from the root console.
+    /// Publish one saved revision from the root console.
+    #[command(name = "publish", alias = "publish-staging")]
     PublishStaging {
         #[arg(long)]
         content: PathBuf,
@@ -62,7 +64,8 @@ enum Command {
         expected_active: String,
     },
     #[cfg(unix)]
-    /// Activate an existing verified staging release from the root console.
+    /// Activate an existing verified release from the root console.
+    #[command(name = "rollback", alias = "rollback-staging")]
     RollbackStaging {
         #[arg(long)]
         state: PathBuf,

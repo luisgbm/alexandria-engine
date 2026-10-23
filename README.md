@@ -21,6 +21,11 @@ WordPress archive and produces a validated, deterministic static release.
   observed URL baseline before completing a release.
 - Keep private content and deployment reports outside the public document root.
 
+The [admin portal](docs/admin-navigation-and-library.md) has separate statistics,
+content, images, categories, publications and security pages. Its image library
+provides uploads, editable alt text/captions and copyable links/HTML. The public
+homepage shows the latest ten article excerpts.
+
 A Unix browser admin service now provides passkey login, private article drafts,
 image uploads, and sandboxed live preview. See [admin staging](docs/admin-staging.md).
 Publishing and rollback now validate and atomically activate staging releases.

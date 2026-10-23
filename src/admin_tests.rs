@@ -90,6 +90,212 @@ fn authenticated(app: &Shared) -> (String, String) {
 }
 
 #[tokio::test]
+async fn image_library_is_private_versioned_and_preserves_existing_urls() {
+    let (temp, app) = fixture();
+    let image = "/uploads/library.png";
+    fs::write(
+        temp.path().join("content/media/uploads/library.png"),
+        b"existing-passive-image",
+    )
+    .unwrap();
+    let (cookie, csrf) = authenticated(&app);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/library",
+            None,
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (_, _, catalog) = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(catalog["total"], 1);
+    let update = serde_json::json!({"path":image,"revision":catalog["revision"],"alt":"Descrição <segura>","caption":"Legenda & poesia","deleted":false});
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            None,
+            update.clone()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            Some(&csrf),
+            update.clone()
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            Some(&csrf),
+            update
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (_, _, catalog) = call(
+        &app,
+        "GET",
+        "/api/library?q=descricao",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(catalog["images"][0]["alt"], "Descrição <segura>");
+    let mut update = serde_json::json!({"path":image,"revision":catalog["revision"],"alt":"Descrição <segura>","caption":"Legenda & poesia","deleted":true});
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            Some(&csrf),
+            update.clone()
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, _, active) = call(
+        &app,
+        "GET",
+        "/api/library",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(active["total"], 0);
+    let (_, _, removed) = call(
+        &app,
+        "GET",
+        "/api/library?deleted=true",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(removed["total"], 1);
+    assert_eq!(
+        fs::read(temp.path().join("content/media/uploads/library.png")).unwrap(),
+        b"existing-passive-image"
+    );
+    update["revision"] = removed["revision"].clone();
+    update["deleted"] = serde_json::json!(false);
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            "/api/library",
+            Some(&cookie),
+            Some(&csrf),
+            update
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert!(Store::open(temp.path().join("content")).is_ok());
+    fs::write(
+        temp.path().join("content/media/uploads/ação #1?.png"),
+        b"passive-image",
+    )
+    .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            "/api/media/uploads/a%C3%A7%C3%A3o%20%231%3F.png",
+            Some(&cookie),
+            None,
+            serde_json::json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn production_identity_and_duplicate_featured_preview() {
+    let (temp, mut app) = fixture();
+    let mutable = Arc::get_mut(&mut app).unwrap();
+    mutable.environment = "production".into();
+    mutable.environment_label = "Produção".into();
+    let (_, _, status) = call(
+        &app,
+        "GET",
+        "/api/status",
+        None,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status["staging"], false);
+    assert_eq!(status["environment"], "production");
+    let (cookie, csrf) = authenticated(&app);
+    let (_, _, session) = call(
+        &app,
+        "GET",
+        "/api/session",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(session["environment_label"], "Produção");
+    fs::write(
+        temp.path().join("content/media/uploads/one.png"),
+        b"passive-image",
+    )
+    .unwrap();
+    let payload = serde_json::json!({"title":"One image","html":"<figure><img src='/uploads/one.png' alt='Body description'><figcaption>Body caption</figcaption></figure>","featured_image":"/uploads/one.png","featured_image_alt":"Old description","featured_image_caption":"Old caption"});
+    let (status, _, preview) = call(
+        &app,
+        "POST",
+        "/api/preview",
+        Some(&cookie),
+        Some(&csrf),
+        payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let html = preview["html"].as_str().unwrap();
+    assert_eq!(html.matches("<img ").count(), 1);
+    assert!(html.contains("Body caption"));
+}
+
+#[tokio::test]
 async fn rejects_unauthenticated_access_csrf_and_foreign_origins() {
     let (_temp, app) = fixture();
     for path in [

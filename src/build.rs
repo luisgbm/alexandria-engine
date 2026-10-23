@@ -121,6 +121,20 @@ fn item_list(entries: &[&Entry], dates: bool) -> String {
     s
 }
 
+fn article_previews(entries: &[&Entry]) -> String {
+    let mut out = String::from("<div class=\"article-previews\">");
+    for entry in entries {
+        let m = &entry.metadata;
+        let text = html::text(&html::sanitize(&entry.body, "https://example.invalid"));
+        let words = text.split_whitespace().collect::<Vec<_>>();
+        let excerpt = words.iter().take(65).copied().collect::<Vec<_>>().join(" ");
+        out.push_str(&format!("<article class=\"article-preview\"><h2><a href=\"{}\">{}</a></h2><time datetime=\"{}\">{}</time><p>{}{}</p><a href=\"{}\">Continuar lendo<span class=\"sr\">: {}</span></a></article>",
+            html::escape(m.permalink.as_deref().unwrap()), html::escape(&m.title), html::escape(m.published_at.as_deref().unwrap_or("")), display_date(m), html::escape(&excerpt), if words.len() > 65 { "…" } else { "" }, html::escape(m.permalink.as_deref().unwrap()), html::escape(&m.title)));
+    }
+    out.push_str("</div>");
+    out
+}
+
 fn display_date(m: &Metadata) -> String {
     let d = &m.original_published_local;
     if d.len() >= 10 {
@@ -194,7 +208,11 @@ fn archive(
         let mut body = format!(
             "<h1>{}</h1>{}",
             html::escape(title),
-            item_list(&entries[start.min(end)..end], true)
+            if root == "/" {
+                article_previews(&entries[start.min(end)..end])
+            } else {
+                item_list(&entries[start.min(end)..end], true)
+            }
         );
         body.push_str("<nav class=\"pagination\" aria-label=\"Paginação\">");
         if i > 0 {
@@ -343,7 +361,9 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
         .copied()
         .filter(|e| e.metadata.kind == "post")
         .collect::<Vec<_>>();
-    archive(&mut writer, &site, "/", &site.title, &articles)?;
+    let mut homepage_site = site.clone();
+    homepage_site.page_size = 10;
+    archive(&mut writer, &homepage_site, "/", &site.title, &articles)?;
     for cat in &site.categories {
         let list = articles
             .iter()

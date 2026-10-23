@@ -158,6 +158,7 @@ After=network.target
 Type=simple
 ExecStart={binary} serve-admin --content {data}/content --state {data}/state --listen {c['backend_bind']} --origin {c['admin_origin']} --rp-id {origin(c['admin_origin']).hostname}
 Environment=ALEXANDRIA_ANALYTICS_DB={data}/analytics/analytics.sqlite
+Environment=ALEXANDRIA_ENVIRONMENT={c["environment"]}
 ReadWritePaths={data}/state {data}/content/editorial {data}/content/media/uploads {publish}
 Restart=on-failure
 RestartSec=3
@@ -375,7 +376,7 @@ def install(c, args):
     execute(executable, 'admin-init', '--state', root / 'data/state', '--secrets', root / 'etc/enrollment',
             '--origin', c['admin_origin'], '--rp-id', origin(c['admin_origin']).hostname)
     chown_tree(root / 'data', user, user)
-    execute(executable, 'init-staging-publisher', '--content', root / 'data/content', '--state', root / 'data/state',
+    execute(executable, 'init-publisher', '--content', root / 'data/content', '--state', root / 'data/state',
             '--root', root / 'publish', '--public-url', c['public_url'])
     # Older bootstrap CLI strips native uploads; portable seeds can legitimately use them.
     uploads = root / 'data/content/media/uploads'
@@ -593,7 +594,7 @@ def main():
         print(json.dumps({'config': c, 'units': names(c), 'cloud_api_calls': False,
                           'dns_changes': False, 'global_nginx_changes': False,
                           'prerequisites': ['Ubuntu 24.04 x86-64', 'python3', 'nginx', 'restic', 'curl', 'openssl'],
-                          'application_note': 'engine CLI/UI currently retain historical staging labels'}, indent=2))
+                          'application_note': 'environment identity is passed explicitly to the admin service'}, indent=2))
     elif args.operation == 'render':
         require(args.output and not args.output.exists(), 'new output directory required')
         args.output.mkdir(parents=True, mode=0o700)

@@ -8,8 +8,9 @@ https://admin.52-153-234-132.sslip.io/. Neither needs an SSH tunnel. The Rust
 administrator listens only on `127.0.0.1:3001`, behind Nginx HTTPS, as the
 unprivileged `alexandria-admin` user.
 
-The current cleaned staging release is `staging-clean-20261023-v3`; the prior
-acceptance baseline `staging-20261022T225033-d7d27da8ff2a` is retained for rollback.
+The current staging release is `staging-library-pages-20261023`, with homepage
+previews over the same 449-item clean content set. Both clean-v3 and the earlier
+acceptance baseline remain available for rollback.
 Always inspect `/srv/alexandria/staging/current`; never infer the active version
 from a historical setup example. Its destination must end in `/public`.
 
@@ -18,6 +19,7 @@ from a historical setup example. Its destination must end in `/public`.
 - [Readiness findings and launch gates](production-readiness.md).
 - [Staging security hardening, recovery and dependency warnings](security-hardening.md).
 - [Clean production content preparation](production-content.md).
+- [Current admin pages and image library](admin-navigation-and-library.md).
 - [Admin setup, authentication and HTTPS](admin-staging.md).
 - [Article/page/category editing, revisions and trash](editorial-workflow.md).
 - [Publishing, atomic activation and rollback](staging-publishing.md).
@@ -253,3 +255,11 @@ It replaces the installation-specific staging scripts for new deployments and
 provides configurable services, Nginx, encrypted backups and a PC pull client.
 The existing staging services and scheduled backup continue using their current
 configuration until an explicit migration.
+
+## Current editorial portal
+
+See [admin pages and image library](admin-navigation-and-library.md). Statistics
+is the landing page; each feature has its own URL. The active staging release
+is now `staging-library-pages-20261023`, with clean-v3 retained for rollback.
+The owner accepted the current content set and phone search; production remains
+on hold. Environment identity can be configured independently of host/provider.

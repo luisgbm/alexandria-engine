@@ -15,6 +15,8 @@ FIXTURES = {
 # Owner confirmed these imported drafts were deleted in WordPress.
 RETIRED_DRAFTS = {'wp-2721', 'wp-2731', 'wp-2747', 'wp-2414', 'wp-3041'}
 IMAGES = [
+    # Private image-library browser acceptance fixture.
+    '6744a6c27b373ede72d0b060932b2e9fd650c51011b8ffbd7d385b96cac685a9.png',
     '1a92e094ee5515ae7dd7d958e6340d50b2ae532b444553a3f0219dc702ad1b30.png',
     '80edd4c00a9f95b6ea9bfee448f4ee7796b5d49d5a93d994ed8f8ea2904405dc.png',
     '4375270f8633b79f46dca7ca0d005c57856ae14515142f68d8970cf6e7ce743b.jpg',

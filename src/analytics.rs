@@ -395,7 +395,7 @@ pub fn report(path: &Path, period: &str) -> Result<serde_json::Value> {
     let mut statement=db.prepare("SELECT d.path,r.title,SUM(d.views),SUM(d.visitors) FROM daily d JOIN routes r ON r.path=d.path WHERE r.kind='post' AND d.day BETWEEN ?1 AND ?2 GROUP BY d.path,r.title ORDER BY SUM(d.views) DESC,d.path LIMIT 10")?;
     let top=statement.query_map(params![since.to_string(),today.to_string()],|r|Ok(serde_json::json!({"path":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"views":r.get::<_,i64>(2)?,"visitors":r.get::<_,i64>(3)?})))?.collect::<std::result::Result<Vec<_>,_>>()?;
     Ok(
-        serde_json::json!({"enabled":true,"staging":true,"period":period,"timezone":"America/Sao_Paulo","start":start.parse::<i64>()?,"last_ingested":updated.and_then(|s|s.parse::<i64>().ok()),"views":total,"visitor_days":visitor_days,"series":series,"top_articles":top,"raw_retention_days":7,"aggregate_retention_days":400}),
+        serde_json::json!({"enabled":true,"period":period,"timezone":"America/Sao_Paulo","start":start.parse::<i64>()?,"last_ingested":updated.and_then(|s|s.parse::<i64>().ok()),"views":total,"visitor_days":visitor_days,"series":series,"top_articles":top,"raw_retention_days":7,"aggregate_retention_days":400}),
     )
 }
 #[cfg(test)]

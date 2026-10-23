@@ -64,6 +64,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('noindex', rendered['nginx.conf'])
         config['environment'] = 'production'
         self.assertNotIn('X-Robots-Tag', deploy.render(config)['nginx.conf'])
+        self.assertIn('Environment=ALEXANDRIA_ENVIRONMENT=production', deploy.render(config)['admin.service'])
         self.assertIn('access_log off;', rendered['nginx.conf'])
         self.assertIn('error_log /dev/null crit;', rendered['nginx.conf'])
 

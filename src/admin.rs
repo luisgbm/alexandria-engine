@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path as RoutePath, State},
+    extract::{DefaultBodyLimit, Multipart, Path as RoutePath, Query, State},
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -31,6 +31,8 @@ use webauthn_rs::prelude::*;
 
 #[path = "admin/editorial.rs"]
 mod editorial;
+#[path = "admin/library.rs"]
+mod library;
 #[path = "admin/publishing.rs"]
 mod publishing;
 pub use publishing::{console_publish, console_rollback, initialize_publishing};
@@ -377,6 +379,8 @@ struct App {
     db: Mutex<Connection>,
     store: Mutex<Store>,
     webauthn: Webauthn,
+    environment: String,
+    environment_label: String,
     origin: String,
     host: String,
     user: Uuid,
@@ -573,9 +577,7 @@ pub async fn serve(
         p.sync_store(&mut app.store.lock().unwrap())?;
     }
     let listener = tokio::net::TcpListener::bind(address).await?;
-    println!(
-        "Staging admin listening on {address}; credentials and request bodies are not logged."
-    );
+    println!("Admin listening on {address}; credentials and request bodies are not logged.");
     axum::serve(listener, router(app))
         .with_graceful_shutdown(async {
             let mut terminate =
@@ -602,13 +604,36 @@ fn make_app(content: PathBuf, state: &Path, origin: String, rp: String) -> Resul
         None => u.host_str().unwrap().into(),
     };
     let user = Uuid::parse_str(&setting(&db, "user_id")?)?;
-    let webauthn = WebauthnBuilder::new(&rp, &u)?
-        .rp_name("Cultura Espiritual · staging")
-        .build()?;
+    let store = Store::open(content)?;
+    let environment = std::env::var("ALEXANDRIA_ENVIRONMENT").unwrap_or_else(|_| "staging".into());
+    ensure!(
+        ["staging", "production"].contains(&environment.as_str()),
+        "invalid deployment environment"
+    );
+    let environment_label = if environment == "production" {
+        "Produção"
+    } else {
+        "Ambiente de testes"
+    }
+    .to_string();
+    let rp_name = std::env::var("ALEXANDRIA_RP_NAME").unwrap_or_else(|_| {
+        if environment == "production" {
+            store.site.title.clone()
+        } else {
+            format!("{} · staging", store.site.title)
+        }
+    });
+    ensure!(
+        !rp_name.trim().is_empty() && rp_name.len() <= 200,
+        "invalid WebAuthn display name"
+    );
+    let webauthn = WebauthnBuilder::new(&rp, &u)?.rp_name(&rp_name).build()?;
     Ok(Arc::new(App {
         db: Mutex::new(db),
-        store: Mutex::new(Store::open(content)?),
+        store: Mutex::new(store),
         webauthn,
+        environment,
+        environment_label,
         origin,
         host,
         user,
@@ -647,6 +672,26 @@ fn router(app: Shared) -> Router {
                 )
             }),
         )
+        .route(
+            "/content/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
+        .route(
+            "/images/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
+        .route(
+            "/categories/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
+        .route(
+            "/publications/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
+        .route(
+            "/security/",
+            get(|| async { Html(include_str!("../admin/index.html")) }),
+        )
         .route("/api/status", get(status))
         .route("/api/session", get(session))
         .route("/api/auth/register/start", post(register_start))
@@ -674,6 +719,7 @@ fn router(app: Shared) -> Router {
         )
         .route("/api/categories/order", post(editorial::order_categories))
         .route("/api/uploads", post(upload))
+        .route("/api/library", get(library::list).put(library::update))
         .route("/api/media/{*path}", get(media))
         .route("/api/analytics", get(analytics_report))
         .route("/api/deployments", get(publishing::history))
@@ -690,7 +736,7 @@ fn router(app: Shared) -> Router {
 async fn status(State(app): State<Shared>) -> ApiResult<Json<serde_json::Value>> {
     let initialized = count_credentials(&app.db.lock().unwrap())? > 0;
     Ok(Json(
-        serde_json::json!({"initialized":initialized,"staging":true,"origin":app.origin,"passkeys_required":2}),
+        serde_json::json!({"initialized":initialized,"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label,"origin":app.origin,"passkeys_required":2}),
     ))
 }
 async fn session(
@@ -702,7 +748,7 @@ async fn session(
     let credential_count = count_credentials(&app.db.lock().unwrap())?;
     let site = &app.store.lock().unwrap().site;
     Ok(Json(
-        serde_json::json!({"csrf":csrf,"expires_in":SESSION_SECONDS,"credentials":credential_count,"site":{"title":site.title,"categories":site.categories,"timezone":site.timezone},"staging":true}),
+        serde_json::json!({"csrf":csrf,"expires_in":SESSION_SECONDS,"credentials":credential_count,"site":{"title":site.title,"categories":site.categories,"timezone":site.timezone},"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label}),
     ))
 }
 #[derive(Deserialize)]
@@ -1241,7 +1287,7 @@ async fn media(
 ) -> ApiResult<Response> {
     app.session(&headers, false)?;
     let root = app.store.lock().unwrap().root.clone();
-    let file = media_file(&root, &format!("/{path}"))
+    let file = media_file(&root, &library::public_path(&format!("/{path}")))
         .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Imagem não encontrada.".into()))?;
     Ok(image_response(&file)?)
 }
@@ -1262,6 +1308,7 @@ async fn upload(
         .await
         .map_err(|_| bad("Falha ao receber o arquivo."))?
         .ok_or_else(|| bad("Escolha uma imagem."))?;
+    let original_name = field.file_name().unwrap_or("Imagem").to_owned();
     let bytes = field
         .bytes()
         .await
@@ -1326,6 +1373,7 @@ async fn upload(
     .await
     .map_err(|_| bad("Falha ao processar a imagem."))?
     .map_err(|_| bad("Envie JPG, PNG ou WebP válido, até 8 MB e 16 megapixels."))?;
+    library::uploaded(&app.store.lock().unwrap().root, &saved, &original_name)?;
     audit(&app.db.lock().unwrap(), "image_uploaded", &saved)?;
     Ok(Json(serde_json::json!({"path":saved})))
 }
@@ -1366,6 +1414,11 @@ async fn preview(
     let store = app.store.lock().unwrap();
     let clean = html::sanitize(&input.html, &store.site.base_url);
     let doc = kuchiki::parse_html().one(clean);
+    let has_featured = input.featured_image.as_ref().is_some_and(|src| {
+        doc.select("img")
+            .unwrap()
+            .any(|n| n.attributes.borrow().get("src") == Some(src.as_str()))
+    });
     for node in doc.select("img").unwrap() {
         let mut attrs = node.attributes.borrow_mut();
         if let Some(src) = attrs.get("src").map(str::to_owned) {
@@ -1387,7 +1440,7 @@ async fn preview(
         attrs.remove("srcset");
     }
     let body = html::children(doc.select_first("body").unwrap().as_node());
-    let featured=input.featured_image.as_deref().filter(|p|media_file(&store.root,p).is_ok()).map(|p|format!("<figure><img src=\"{}/preview/media/{capability}{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>",app.origin,html::escape(p),html::escape(&input.featured_image_alt),html::escape(&input.featured_image_caption))).unwrap_or_default();
+    let featured=input.featured_image.as_deref().filter(|_| !has_featured).filter(|p|media_file(&store.root,p).is_ok()).map(|p|format!("<figure><img src=\"{}/preview/media/{capability}{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>",app.origin,html::escape(p),html::escape(&input.featured_image_alt),html::escape(&input.featured_image_caption))).unwrap_or_default();
     let document = format!(
         "<!doctype html><html lang=pt-BR><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=referrer content=no-referrer><meta http-equiv=Content-Security-Policy content=\"default-src 'none'; img-src {}; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\"><style>{}a{{pointer-events:none}}</style></head><body><main><article><h1>{}</h1>{featured}<div class=entry-content>{body}</div></article></main></body></html>",
         app.origin,
@@ -1422,7 +1475,7 @@ async fn preview_media(
         }
     }
     let root = app.store.lock().unwrap().root.clone();
-    let file = media_file(&root, &format!("/{path}"))
+    let file = media_file(&root, &library::public_path(&format!("/{path}")))
         .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Imagem não encontrada.".into()))?;
     Ok(image_response(&file)?)
 }
@@ -1445,9 +1498,11 @@ async fn analytics_report(
         return Err(bad("Escolha dia, semana, mês ou ano."));
     }
     let path = app.analytics_db.clone();
-    let report =
+    let mut report =
         tokio::task::spawn_blocking(move || crate::analytics::report(&path, &query.period))
             .await
             .map_err(anyhow::Error::from)??;
+    report["environment"] = serde_json::json!(app.environment);
+    report["staging"] = serde_json::json!(app.environment == "staging");
     Ok(Json(report))
 }
