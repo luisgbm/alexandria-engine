@@ -1,0 +1,25 @@
+[Unit]
+Description=Private staging availability, certificate, disk and capture checks
+After=nginx.service alexandria-admin-staging.service
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /usr/local/lib/alexandria-health/staging-health.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/var/lib/alexandria-health
+InaccessiblePaths=/var/lib/alexandria-admin-staging/state /var/lib/alexandria-analytics /etc/alexandria-backup
+MemoryMax=128M
+TasksMax=16
+TimeoutStartSec=60

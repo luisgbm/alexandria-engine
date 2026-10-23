@@ -18,10 +18,12 @@ PATHS = [
     '/srv/alexandria/staging', '/opt/alexandria/admin-staging',
     '/etc/nginx', '/etc/letsencrypt', '/etc/logrotate.d/alexandria-analytics',
     '/etc/alexandria-backup', '/usr/local/lib/alexandria-backup',
+    '/etc/ufw', '/etc/default/ufw', '/etc/ssh/sshd_config.d', '/etc/logrotate.d/nginx',
+    '/usr/local/lib/alexandria-health', '/var/lib/alexandria-health',
 ]
 UNITS = ['alexandria-admin-staging.service', 'alexandria-analytics.service',
          'alexandria-analytics.timer', 'alexandria-backup.service',
-         'alexandria-backup.timer']
+         'alexandria-backup.timer', 'alexandria-health.service', 'alexandria-health.timer']
 
 
 def run(*args, **kwargs):

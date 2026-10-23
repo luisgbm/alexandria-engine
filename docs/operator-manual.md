@@ -16,6 +16,7 @@ from a historical setup example. Its destination must end in `/public`.
 ## Operations index
 
 - [Readiness findings and launch gates](production-readiness.md).
+- [Staging security hardening, recovery and dependency warnings](security-hardening.md).
 - [Clean production content preparation](production-content.md).
 - [Admin setup, authentication and HTTPS](admin-staging.md).
 - [Article/page/category editing, revisions and trash](editorial-workflow.md).

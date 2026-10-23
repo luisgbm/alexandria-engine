@@ -245,3 +245,21 @@ Admin writers were briefly paused only for consistent capture and then resumed.
 The server's temporary plaintext capture was removed after encryption. No original
 website/server access or DNS changes occurred. This verifies the newer recovery
 point; it does not repeat the entire fresh-VPS rehearsal for that new snapshot.
+
+## Hardening configuration coverage
+
+The subsequent staging hardening pass extended capture coverage to `/etc/ufw`,
+`/etc/default/ufw`, `/etc/ssh/sshd_config.d`, `/etc/logrotate.d/nginx`, and the
+health script/state/service/timer. Admin and analytics sandbox drop-ins and Nginx
+vhosts are included by the existing paths. SSH host/private keys remain excluded.
+`verify-pc-recovery-point.py --require-hardening` checks ten required configuration
+files and the no-request-error-log/capability/memory settings inside the encrypted
+PC snapshot. See [hardening evidence](security-hardening.md). Restored SSH/firewall
+rules require review against the replacement's access and recovery channel before
+activation; do not blindly enable source-host rules on a new machine.
+
+Final hardening snapshot `070956e6` (October 23 11:33 Brasília) passed the full PC
+Restic data check and all ten additional configuration-file checks, along with
+both passkeys, 449 clean published items and eight corrected articles. Private
+evidence is `admin-validation\hardening-backup-20261023.json`. This is now newer
+than the initial fresh-capture snapshot `06765729` recorded above.

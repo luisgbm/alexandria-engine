@@ -90,19 +90,18 @@ launch. Trash deliberately does not remove already published content.
    explicit before using the same application for production. Keep staging
    noindex; omit staging noindex headers from the production public vhost. Verify
    apex/www redirects, canonical/feed/sitemap origins and preview/public links.
-4. **Complete security and operational follow-up.** A capability bounding set is
-   not explicitly reduced, and systemd-analyze reports 6.2 MEDIUM exposure (a
-   heuristic, not a vulnerability finding). Rehearse tighter service restrictions
-   on staging, then rerun publish/upload/analytics/backup checks. Choose and test
-   host firewall policy and SSH source restrictions with an independent recovery
-   console; avoid an unreviewed rule change that could lock out administration.
-   Review Nginx error-log handling: request URIs can contain short-lived preview
-   capabilities even with access logging off. Avoid recording capability paths;
-   restrict/rotate diagnostic logs. Run dependency vulnerability auditing against
-   an up-to-date advisory database; cargo-audit was not installed, so this pass
-   makes no claim that dependencies are vulnerability-free. Define monitoring for
-   failed services/backups, certificate expiry and disk growth; timers alone are
-   not alerts. Use an optimized release build for the production binary.
+4. **Staging hardening applied — see [evidence and maintenance follow-ups](security-hardening.md).**
+   Empty capabilities, syscall/memory/namespace restrictions, host firewall, SSH
+   restrictions, request-log privacy and a local health timer are deployed.
+   Restricted positive/negative tests, fresh SSH/Azure recovery checks and all
+   URL/security probes passed. Systemd admin exposure score is now 1.3 (heuristic).
+   RustSec found zero vulnerability-list entries and three warnings, retained
+   explicitly: unmaintained parser/hash crates and an old build-time rand warning
+   whose required logging feature is disabled. Parser migration needs separate
+   parity validation. SSH source allowlisting awaits stable administrator IPs;
+   health alerts remain local until an external channel is chosen. An optimized
+   production build remains launch work. Hardened configuration is included in
+   the new capture list and verified encrypted PC copy.
 5. **Close preview parity and mobile search checks.** Preview currently always
    prepends the featured image while the generator suppresses a duplicated image
    already present in the article body; reconcile that behavior and verify it.

@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--password-file', type=Path, required=True)
     parser.add_argument('--expected-release', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--require-hardening', action='store_true')
     args = parser.parse_args()
     command = [str(args.restic), '--repo', str(args.repo), '--password-file', str(args.password_file)]
 
@@ -76,11 +77,27 @@ def main():
     for identity in REPAIRED:
         path = 'var/lib/alexandria-admin-staging/content/articles/' + identity + '/body.html'
         assert entries[path]['sha256'] == entries[active + 'articles/' + identity + '/body.html']['sha256']
+    hardening = []
+    if args.require_hardening:
+        hardening = ['etc/systemd/system/alexandria-admin-staging.service.d/90-hardening.conf',
+                     'etc/systemd/system/alexandria-analytics.service.d/90-hardening.conf',
+                     'etc/ssh/sshd_config.d/00-alexandria-hardening.conf', 'etc/ufw/user.rules',
+                     'etc/default/ufw', 'etc/nginx/sites-available/alexandria-admin-https',
+                     'etc/logrotate.d/nginx', 'usr/local/lib/alexandria-health/staging-health.py',
+                     'etc/systemd/system/alexandria-health.service', 'etc/systemd/system/alexandria-health.timer']
+        for path in hardening:
+            body = dump(path)
+            assert hashlib.sha256(body).hexdigest() == entries[path]['sha256']
+            if path.endswith('90-hardening.conf'):
+                assert b'CapabilityBoundingSet=\n' in body and b'MemoryDenyWriteExecute=true' in body
+            if path.endswith('alexandria-admin-https'):
+                assert b'error_log /dev/null crit;' in body
     report = {'passed': True, 'snapshot_id': latest['id'], 'snapshot_time': latest['time'],
               'captured_at': host['captured_at'], 'active_release': args.expected_release,
               'passkeys': passkeys, 'clean_published_documents': len(metadata),
               'repaired_articles_verified': corrected, 'private_fixture_drafts_preserved': len(FIXTURES),
-              'sqlite_integrity': True, 'plaintext_database_written_to_disk': False}
+              'sqlite_integrity': True, 'plaintext_database_written_to_disk': False,
+              'hardening_files_verified': hardening}
     args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))
 

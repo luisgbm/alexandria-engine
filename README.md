@@ -128,6 +128,7 @@ does not prove that every URL ever published has been discovered.
 ## Documentation
 
 - [Production readiness findings and launch gates](docs/production-readiness.md)
+- [Staging security hardening](docs/security-hardening.md)
 
 - [Technical specification](docs/technical_spec.md)
 - [Migration inventory and decisions](docs/migration-inventory.md)
