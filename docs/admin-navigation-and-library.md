@@ -719,3 +719,5 @@ O painel Conteúdo separa 📝 Artigos, 📄 Páginas e 🗑️ Lixeira em um me
 Categorias aparecem somente em artigos. Salvar uma página limpa suas categorias também no servidor; esta alteração não modifica em lote as páginas existentes nem publica conteúdo.
 
 A barra do editor insere parágrafo, negrito, itálico, sublinhado, listas com ou sem numeração e links sobre a seleção no HTML, preservando o restante do texto. Cada linha selecionada vira um item de lista. Links aceitam HTTP(S), mailto, caminhos locais e fragmentos; atributos são escapados. O corte da prévia continua disponível. As ferramentas respeitam a lixeira e as páginas com listas geradas; alterações atualizam o rascunho e a prévia, e exigem salvar/publicar normalmente.
+
+Na seção Artigos, o filtro Categoria aparece abaixo de Estado, com a opção Todas as categorias. Ele combina categoria, estado e busca por título. A seleção é preservada quando o catálogo é recarregado e volta para Todas se a categoria deixar de existir. Páginas e Lixeira não aplicam esse filtro.
