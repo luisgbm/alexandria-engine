@@ -1252,7 +1252,7 @@ async fn editorial_pages_revision_restore_and_trash_are_durable() {
     assert_eq!(page["metadata"]["categories"], serde_json::json!([]));
     let id = page["metadata"]["id"].as_str().unwrap();
     let path = format!("/api/articles/{id}");
-    let mut payload = serde_json::json!({"revision":page["revision"],"title":"Page one","html":"<p>First version</p>","permalink":"/test-page/","categories":[],"tags":["Espírito","Filosofia","Espírito"],"featured_image":null,"featured_image_alt":"","featured_image_caption":"","published_local":"2026-10-22T15:00:00"});
+    let mut payload = serde_json::json!({"revision":page["revision"],"title":"Page one","html":"<p>First version</p>","permalink":"/test-page/","categories":["artigos"],"tags":["Espírito","Filosofia","Espírito"],"featured_image":null,"featured_image_alt":"","featured_image_caption":"","published_local":"2026-10-22T15:00:00"});
     let (status, _, saved) = call(
         &app,
         "PUT",
@@ -1263,6 +1263,7 @@ async fn editorial_pages_revision_restore_and_trash_are_durable() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["metadata"]["categories"], serde_json::json!([]));
     assert_eq!(saved["metadata"]["tags"], serde_json::json!([]));
     payload["revision"] = saved["revision"].clone();
     payload["title"] = "Page two".into();

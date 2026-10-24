@@ -710,3 +710,12 @@ a collapsed mobile index and no horizontal overflow. Desktop reading width was
 `/root/alexandria-before-philosophers-polish-20261024T015906Z`.
 Screenshots: `admin-validation/philosophers-polish-desktop-20261023.png` and
 `admin-validation/philosophers-polish-mobile-20261023.png`.
+
+
+### Conteúdo: navegação e formatação
+
+O painel Conteúdo separa 📝 Artigos, 📄 Páginas e 🗑️ Lixeira em um menu visível. Artigos e páginas têm o mesmo estilo de ação de criação, exibida apenas na seção correspondente; o filtro Estado contém Todos, Publicados e Rascunhos. Trocar de seção pede confirmação se houver alterações não salvas. A lixeira reúne os dois tipos e mantém a confirmação existente para exclusão definitiva.
+
+Categorias aparecem somente em artigos. Salvar uma página limpa suas categorias também no servidor; esta alteração não modifica em lote as páginas existentes nem publica conteúdo.
+
+A barra do editor insere parágrafo, negrito, itálico, sublinhado, listas com ou sem numeração e links sobre a seleção no HTML, preservando o restante do texto. Cada linha selecionada vira um item de lista. Links aceitam HTTP(S), mailto, caminhos locais e fragmentos; atributos são escapados. O corte da prévia continua disponível. As ferramentas respeitam a lixeira e as páginas com listas geradas; alterações atualizam o rascunho e a prévia, e exigem salvar/publicar normalmente.

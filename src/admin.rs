@@ -1416,7 +1416,11 @@ async fn save_entry(
     document.metadata.title = input.title.trim().into();
     document.metadata.status = "draft".into();
     document.metadata.permalink = input.permalink;
-    document.metadata.categories = input.categories;
+    document.metadata.categories = if document.metadata.kind == "page" {
+        Vec::new()
+    } else {
+        input.categories
+    };
     document.metadata.featured_image = input.featured_image;
     document.metadata.featured_image_alt = Some(input.featured_image_alt);
     document.metadata.featured_image_caption = Some(input.featured_image_caption);
