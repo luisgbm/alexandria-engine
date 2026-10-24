@@ -231,10 +231,10 @@
 
   function renderEntries() {
 
-    const query=normalize($("filter").value), filter=contentSection==="trash" ? "trash" : $("status-filter").value;
+    const query=normalize($("filter").value), filter=contentSection==="trash" ? "trash" : $("status-filter").value, category=$("category-filter").value;
     $("empty-trash").hidden=filter!=="trash";$("empty-trash").disabled=!entries.some(e=>e.trashed);
 
-    const visible=entries.filter(e => normalize(e.title).includes(query) && (contentSection==="trash" || e.kind===contentSection) && (filter==="trash" ? e.trashed : !e.trashed) && (filter==="trash" || filter==="all" || (filter==="draft" ? e.has_saved_draft : e.status==="published"))).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
+    const visible=entries.filter(e => normalize(e.title).includes(query) && (contentSection!=="post" || !category || (e.categories||[]).includes(category)) && (contentSection==="trash" || e.kind===contentSection) && (filter==="trash" ? e.trashed : !e.trashed) && (filter==="trash" || filter==="all" || (filter==="draft" ? e.has_saved_draft : e.status==="published"))).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
 
     $("list-count").textContent=`${visible.length} item(ns)`;$("articles").replaceChildren();
 
@@ -252,7 +252,7 @@
 
   }
 
-  $("filter").oninput=renderEntries;$("status-filter").onchange=renderEntries;
+  $("filter").oninput=renderEntries;$("status-filter").onchange=renderEntries;$("category-filter").onchange=renderEntries;
 
   function selectContentSection(section) {
     if(section!==contentSection&&doc){
@@ -264,6 +264,7 @@
     for(const button of document.querySelectorAll("[data-content-section]"))button.setAttribute("aria-pressed",String(button.dataset.contentSection===section));
     $("new-article").hidden=section!=="post";$("new-page").hidden=section!=="page";
     $("status-filter").hidden=section==="trash";$("status-filter-label").hidden=section==="trash";
+    $("category-filter-control").hidden=section!=="post";
     renderEntries();
   }
   for(const button of document.querySelectorAll("[data-content-section]"))button.onclick=()=>selectContentSection(button.dataset.contentSection);
@@ -391,8 +392,16 @@
     finally{button.disabled=$("empty-trash-confirmation").value!=="ESVAZIAR LIXEIRA";$("cancel-empty-trash").disabled=false;}
   };
 
+  function refreshCategoryFilter(){
+    const filter=$("category-filter"),selected=filter.value;
+    const all=document.createElement("option");all.value="";all.textContent="Todas as categorias";
+    filter.replaceChildren(all);
+    for(const category of categories){const option=document.createElement("option");option.value=category.slug;option.textContent=category.name;filter.append(option);}
+    filter.value=categories.some(category=>category.slug===selected) ? selected : "";
+    renderEntries();
+  }
   async function loadCategories(){
-    const result=await api("/api/categories");catalogRevision=result.revision;categories=result.categories;$("category-list").replaceChildren();
+    const result=await api("/api/categories");catalogRevision=result.revision;categories=result.categories;refreshCategoryFilter();$("category-list").replaceChildren();
     for(const category of categories){const li=document.createElement("li"),name=document.createElement("input"),rename=document.createElement("button"),remove=document.createElement("button"),info=document.createElement("small");
       name.value=category.name;name.maxLength=100;name.setAttribute("aria-label",`Nome da categoria ${category.slug}`);info.textContent=` /category/${category.slug}/ · ${category.entries} conteúdo(s) `;
       rename.type=remove.type="button";rename.textContent="Renomear";remove.textContent="Excluir";rename.className=remove.className="quiet";

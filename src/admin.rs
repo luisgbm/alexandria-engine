@@ -1169,7 +1169,7 @@ async fn list_entries(
 ) -> ApiResult<Json<serde_json::Value>> {
     app.session(&headers, false)?;
     let store = app.store.lock().unwrap();
-    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.has_saved_draft,"trashed":d.trashed,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
+    let entries=store.entries.values().map(|d|serde_json::json!({"id":d.metadata.id,"title":d.metadata.title,"kind":d.metadata.kind,"status":d.publication_status,"has_saved_draft":d.has_saved_draft,"categories":d.metadata.categories,"trashed":d.trashed,"date":d.metadata.original_published_local})).collect::<Vec<_>>();
     Ok(Json(serde_json::json!({"entries":entries})))
 }
 async fn get_entry(
