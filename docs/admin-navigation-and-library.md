@@ -678,3 +678,35 @@ root-only recovery test remains intentionally ignored. Private recovery copies:
 `/root/alexandria-before-books-contact-link-20261024T000626Z`.
 Screenshots: `admin-validation/books-page-polish-desktop-20261023.png` and
 `admin-validation/books-page-polish-mobile-20261023.png`.
+
+
+## Philosophers page presentation
+
+The `/filosofos/` page preserves all 26 original entries and their order, text,
+inline formatting and lists. Names are semantic h2 headings, and each section
+has a stable accent-normalized `filosofo-*` anchor. An alphabetical name index
+links directly to each entry; **Voltar ao índice** links return to it. All links
+use explicit `/filosofos/#...` destinations to survive URL sanitization.
+
+The page has a narrower reading measure, consistent heading spacing, subtle
+separators and more legible lists. Nine longer entries keep their first paragraph
+visible and place the remaining original content in native details/summary
+controls (**Continuar lendo** / **Recolher texto**); no text is truncated or
+replaced. Short biographies remain entirely visible. No JavaScript is needed.
+
+Desktop shows a three-column index. Mobile uses a collapsed **Escolher filósofo
+(26)** disclosure with a two-column name list, so navigation does not dominate
+the initial screen. Desktop/mobile index variants share one anchor and are
+mutually hidden with CSS. All styling is scoped to the philosophers page.
+
+
+Philosophers polish verified on staging release
+`release-20261024T015907-acd0d69e9a61`. Every entry's original text was compared
+with the new saved content; all 26 match. Other page/article metadata and bodies
+and public site settings were verified unchanged. Browser checks covered all
+anchor targets, Peirce's expanded lists, Freud's mobile disclosure, return links,
+a collapsed mobile index and no horizontal overflow. Desktop reading width was
+795.4px; mobile used its 343.2px container. Recovery copy:
+`/root/alexandria-before-philosophers-polish-20261024T015906Z`.
+Screenshots: `admin-validation/philosophers-polish-desktop-20261023.png` and
+`admin-validation/philosophers-polish-mobile-20261023.png`.
