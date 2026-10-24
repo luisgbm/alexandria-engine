@@ -473,3 +473,347 @@ fn native_starter_builds_without_wordpress() {
     assert!(!homepage.contains("Example publication"));
     assert!(output.join("public/sitemap.xml").exists());
 }
+
+fn repack_archive(
+    archive: &Path,
+    target: &Path,
+    sql_member: &str,
+    transform: impl Fn(&str) -> String,
+    root_uploads: bool,
+) {
+    let mut source = tar::Archive::new(flate2::read::GzDecoder::new(
+        fs::File::open(archive).unwrap(),
+    ));
+    let mut output = tar::Builder::new(GzEncoder::new(
+        fs::File::create(target).unwrap(),
+        Compression::default(),
+    ));
+    for entry in source.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let name = entry.path().unwrap().to_string_lossy().into_owned();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut data).unwrap();
+        if name.ends_with("database.sql") {
+            append(
+                &mut output,
+                sql_member,
+                transform(std::str::from_utf8(&data).unwrap()).as_bytes(),
+            );
+        } else {
+            let name = if root_uploads {
+                name.replace("backup/site/", "")
+            } else {
+                name
+            };
+            append(&mut output, &name, &data);
+        }
+    }
+    output.into_inner().unwrap().finish().unwrap();
+}
+
+#[test]
+fn offline_import_generates_unverified_inventory_without_csv_or_captured_html() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, _, _) = fixture(root);
+    let output = root.join("offline");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_alexandria-engine"))
+        .arg("import-wordpress")
+        .arg("--archive")
+        .arg(&archive)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = read_json(&output.join("import-report.json")).unwrap();
+    assert_eq!(report["source_entries"], 1);
+    assert_eq!(report["captured_entries"], 0);
+    assert!(!report["warnings"].as_array().unwrap().is_empty());
+    let rows = csv::Reader::from_path(output.join("import-inventory/urls.csv"))
+        .unwrap()
+        .deserialize::<BTreeMap<String, String>>()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .any(|r| r["url"].ends_with("/artigos/oracao/") && r["kinds"] == "post")
+    );
+    assert!(
+        rows.iter()
+            .all(|r| r["checked"] == "no" && r["status"].is_empty())
+    );
+    let site = read_site(&output.join("site.json")).unwrap();
+    assert!(site.observed_paths.is_empty());
+    let body = fs::read_to_string(output.join("articles/wp-1/body.html")).unwrap();
+    assert!(body.contains("Original<br>"));
+    assert!(body.contains("poesia"));
+    build::run(&output, &root.join("offline-release")).unwrap();
+    let home = fs::read_to_string(root.join("offline-release/public/index.html")).unwrap();
+    assert!(!home.contains("SECRET DRAFT"));
+    assert!(!home.contains("PRIVATE BODY"));
+}
+
+#[test]
+fn imports_custom_prefix_root_sql_and_uploads_with_source_captions_more_and_lists() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, _, _) = fixture(root);
+    let custom = root.join("custom.tar.gz");
+    repack_archive(
+        &archive,
+        &custom,
+        "export.sql",
+        |s| {
+            s.replace("wp_", "custom42_").replace(r"Original\npoesia", r#"Intro\nlinha\n\n[caption align="aligncenter"]<img src="https://www.example.com/wp-content/uploads/a.jpg">Legenda[/caption]\n\n[catlist name=artigos orderby=title]\n\n[gallery ids="1"]\n<!--more-->Fim"#)
+        },
+        true,
+    );
+    let output = root.join("custom");
+    import::run_with_options(&custom, &output, &import::Options::default()).unwrap();
+    let report: serde_json::Value = read_json(&output.join("import-report.json")).unwrap();
+    assert_eq!(report["table_prefix"], "custom42_");
+    assert_eq!(report["sql_member"], "export.sql");
+    let body = fs::read_to_string(output.join("articles/wp-1/body.html")).unwrap();
+    for expected in [
+        "<figure",
+        "<figcaption>Legenda</figcaption>",
+        "<!--more-->",
+        "data-list-index=\"0\"",
+        "[gallery",
+    ] {
+        assert!(body.contains(expected), "{body}");
+    }
+    assert!(output.join("media/wp-content/uploads/a.jpg").exists());
+    assert!(
+        report["warnings"][0]["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("gallery"))
+    );
+    build::run(&output, &root.join("custom-release")).unwrap();
+}
+
+#[test]
+fn ambiguous_prefix_and_invalid_ids_fail_without_activating_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, _, _) = fixture(root);
+    let multiple = root.join("multiple.tar.gz");
+    repack_archive(
+        &archive,
+        &multiple,
+        "export.sql",
+        |s| format!("{s}\n{}", s.replace("wp_", "second_")),
+        false,
+    );
+    let output = root.join("ambiguous");
+    assert!(
+        import::run_with_options(&multiple, &output, &import::Options::default())
+            .unwrap_err()
+            .to_string()
+            .contains("--table-prefix")
+    );
+    assert!(!output.exists());
+    let selected = root.join("selected");
+    import::run_with_options(
+        &multiple,
+        &selected,
+        &import::Options {
+            table_prefix: Some("second_"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let unsafe_ids = root.join("unsafe.tar.gz");
+    repack_archive(
+        &archive,
+        &unsafe_ids,
+        "dump.sql",
+        |s| s.replace("VALUES (1,0,'post'", "VALUES ('../../escape',0,'post'"),
+        false,
+    );
+    assert!(
+        import::run_with_options(
+            &unsafe_ids,
+            &root.join("unsafe"),
+            &import::Options::default()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("invalid WordPress post ID")
+    );
+    assert!(!root.join("escape").exists());
+}
+
+#[test]
+fn verified_mode_requires_http_evidence_and_custom_theme_selector_is_explicit() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, rendered, inventory) = fixture(root);
+    assert!(
+        import::run_with_options(
+            &archive,
+            &root.join("no-input"),
+            &import::Options {
+                require_verified: true,
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    let url = "https://www.example.com/artigos/oracao/";
+    let file = rendered.join(format!("{:x}.html", Sha256::digest(url.as_bytes())));
+    fs::write(&file,"<html><head><link rel=\"canonical\" href=\"/artigos/oracao/\"></head><body><main class=\"custom-body\"><p>Captured theme</p></main></body></html>").unwrap();
+    import::run_with_options(
+        &archive,
+        &root.join("theme"),
+        &import::Options {
+            rendered: Some(&rendered),
+            inventory: Some(&inventory),
+            content_selector: Some("main.custom-body"),
+            require_verified: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        fs::read_to_string(root.join("theme/articles/wp-1/body.html"))
+            .unwrap()
+            .contains("Captured theme")
+    );
+    fs::write(
+        inventory.join("urls.csv"),
+        format!("url,checked,status\n{url},no,\n"),
+    )
+    .unwrap();
+    assert!(
+        import::run_with_options(
+            &archive,
+            &root.join("unverified"),
+            &import::Options {
+                rendered: Some(&rendered),
+                inventory: Some(&inventory),
+                content_selector: Some("main.custom-body"),
+                require_verified: true,
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("verified inventory")
+    );
+}
+
+#[test]
+fn sql_member_and_timezone_overrides_are_explicit_and_keep_unselected_dumps_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, _, _) = fixture(root);
+    let mut source = tar::Archive::new(flate2::read::GzDecoder::new(
+        fs::File::open(&archive).unwrap(),
+    ));
+    let mut original = String::new();
+    for item in source.entries().unwrap() {
+        let mut item = item.unwrap();
+        if item.path().unwrap().ends_with("database.sql") {
+            std::io::Read::read_to_string(&mut item, &mut original).unwrap();
+        }
+    }
+    let multiple = root.join("two-dumps.tar.gz");
+    let mut tar = tar::Builder::new(GzEncoder::new(
+        fs::File::create(&multiple).unwrap(),
+        Compression::default(),
+    ));
+    append(&mut tar, "old.sql", original.as_bytes());
+    append(
+        &mut tar,
+        "nested/selected.sql",
+        original
+            .replace(
+                "('timezone_string','America/Sao_Paulo')",
+                "('timezone_string','')",
+            )
+            .as_bytes(),
+    );
+    tar.into_inner().unwrap().finish().unwrap();
+    assert!(
+        import::run_with_options(
+            &multiple,
+            &root.join("multiple-failure"),
+            &import::Options::default()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("--sql-path")
+    );
+    assert!(
+        import::run_with_options(
+            &multiple,
+            &root.join("zone-failure"),
+            &import::Options {
+                sql_path: Some("nested/selected.sql"),
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("--timezone")
+    );
+    let content = root.join("selected-zone");
+    import::run_with_options(
+        &multiple,
+        &content,
+        &import::Options {
+            sql_path: Some("nested/selected.sql"),
+            timezone: Some("America/Sao_Paulo"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_site(&content.join("site.json")).unwrap().timezone,
+        "America/Sao_Paulo"
+    );
+    assert!(!content.join("old.sql").exists());
+}
+
+#[test]
+fn unrelated_plugin_binary_rows_are_ignored_without_exporting_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, _, _) = fixture(root);
+    let plugins = root.join("plugins.tar.gz");
+    repack_archive(
+        &archive,
+        &plugins,
+        "export.sql",
+        |s| {
+            format!(
+                "{s}\nCREATE TABLE `wp_plugin_cache` (\n  `payload` blob\n) ENGINE=InnoDB;\nINSERT INTO `wp_plugin_cache` VALUES (0xDEADBEEF);\n"
+            )
+        },
+        false,
+    );
+    let content = root.join("plugins");
+    import::run_with_options(&plugins, &content, &import::Options::default()).unwrap();
+    assert!(content.join("articles/wp-1/body.html").exists());
+    assert!(
+        !fs::read_to_string(content.join("import-report.json"))
+            .unwrap()
+            .contains("DEADBEEF")
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(content).unwrap().permissions().mode() & 0o077,
+            0
+        );
+    }
+}

@@ -121,9 +121,25 @@ enum Command {
         #[arg(long)]
         archive: PathBuf,
         #[arg(long)]
-        rendered_html: PathBuf,
+        rendered_html: Option<PathBuf>,
         #[arg(long)]
-        inventory: PathBuf,
+        inventory: Option<PathBuf>,
+        /// Select a database when several dumps exist in the tar.gz archive.
+        #[arg(long)]
+        sql_path: Option<String>,
+        /// Select one WordPress site; otherwise detect a unique posts/options prefix.
+        #[arg(long)]
+        table_prefix: Option<String>,
+        #[arg(long)]
+        timezone: Option<String>,
+        #[arg(long)]
+        site_url: Option<String>,
+        /// CSS selector for captured HTML, optionally containing {id}.
+        #[arg(long)]
+        content_selector: Option<String>,
+        /// Require checked canonical URLs and captured HTML for every published entry.
+        #[arg(long)]
+        require_verified: bool,
         #[arg(long)]
         output: PathBuf,
     },
@@ -220,8 +236,27 @@ fn main() -> Result<()> {
             archive,
             rendered_html,
             inventory,
+            sql_path,
+            table_prefix,
+            timezone,
+            site_url,
+            content_selector,
+            require_verified,
             output,
-        } => alexandria_engine::import::run(&archive, &rendered_html, &inventory, &output)?,
+        } => alexandria_engine::import::run_with_options(
+            &archive,
+            &output,
+            &alexandria_engine::import::Options {
+                rendered: rendered_html.as_deref(),
+                inventory: inventory.as_deref(),
+                sql_path: sql_path.as_deref(),
+                table_prefix: table_prefix.as_deref(),
+                timezone: timezone.as_deref(),
+                site_url: site_url.as_deref(),
+                content_selector: content_selector.as_deref(),
+                require_verified,
+            },
+        )?,
         Command::Build { content, output } => alexandria_engine::build::run(&content, &output)?,
     }
     Ok(())

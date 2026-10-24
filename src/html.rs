@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use kuchiki::{NodeRef, traits::TendrilSink};
 use std::collections::{BTreeMap, HashSet};
 use url::Url;
@@ -381,12 +381,29 @@ pub fn sanitize(input: &str, base: &str) -> String {
 }
 
 pub fn rendered_body(snapshot: &str, id: &str, listings: usize, base: &str) -> Result<String> {
+    rendered_body_with_selector(snapshot, id, listings, base, None)
+}
+
+pub fn rendered_body_with_selector(
+    snapshot: &str,
+    id: &str,
+    listings: usize,
+    base: &str,
+    selector: Option<&str>,
+) -> Result<String> {
     let doc = kuchiki::parse_html().one(snapshot);
-    let selector = format!("article#post-{id} .entry-content");
-    let node = doc
-        .select_first(&selector)
-        .ok()
-        .context("snapshot is missing the expected WordPress article content")?;
+    let selector = selector
+        .map(|s| s.replace("{id}", id))
+        .unwrap_or_else(|| format!("article#post-{id} .entry-content"));
+    let nodes = doc
+        .select(&selector)
+        .map_err(|_| anyhow::anyhow!("invalid content CSS selector"))?
+        .collect::<Vec<_>>();
+    ensure!(
+        nodes.len() == 1,
+        "captured HTML must match exactly one content element; use --content-selector for this theme"
+    );
+    let node = &nodes[0];
     let lists = node
         .as_node()
         .select("ul.lcp_catlist")

@@ -7,8 +7,18 @@ pub type Row = BTreeMap<String, String>;
 pub type Tables = BTreeMap<String, Vec<Row>>;
 
 pub fn parse(sql: &str) -> Result<Tables> {
-    let create = Regex::new(r"(?ms)^CREATE TABLE `([^`]+)` \((.*?)^\) ENGINE")?;
-    let column = Regex::new(r"(?m)^  `([^`]+)`")?;
+    parse_tables(sql, false)
+}
+
+/// Decode only core WordPress table groups; unrelated plugin data is never imported.
+pub fn parse_wordpress(sql: &str) -> Result<Tables> {
+    parse_tables(sql, true)
+}
+
+fn parse_tables(sql: &str, wordpress_only: bool) -> Result<Tables> {
+    let create = Regex::new(r"(?mis)^CREATE TABLE(?: IF NOT EXISTS)? `([^`]+)` \((.*?)^\)[^;]*;")?;
+    let column = Regex::new(r"(?m)^[ \t]+`([^`]+)`")?;
+    let identifier = Regex::new(r"`([^`]+)`")?;
     let mut schemas = BTreeMap::new();
     for cap in create.captures_iter(sql) {
         schemas.insert(
@@ -19,14 +29,65 @@ pub fn parse(sql: &str) -> Result<Tables> {
                 .collect::<Vec<_>>(),
         );
     }
-    let insert = Regex::new(r"(?m)^INSERT INTO `([^`]+)` VALUES (.*);\r?$")?;
-    let mut tables = Tables::new();
-    for cap in insert.captures_iter(sql) {
-        // Deliberately ignore users, credentials, options unrelated to import, and logs at output time.
-        let columns = schemas
+    let mut allowed = std::collections::BTreeSet::new();
+    for (name, columns) in &schemas {
+        if let Some(prefix) = name.strip_suffix("posts")
+            && columns.iter().any(|c| c == "post_content")
+            && columns.iter().any(|c| c == "ID")
+            && schemas.contains_key(&format!("{prefix}options"))
+        {
+            for suffix in [
+                "posts",
+                "options",
+                "postmeta",
+                "terms",
+                "term_taxonomy",
+                "term_relationships",
+                "users",
+            ] {
+                allowed.insert(format!("{prefix}{suffix}"));
+            }
+        }
+    }
+    let insert =
+        Regex::new(r"(?is)^\s*INSERT(?: IGNORE)? INTO `([^`]+)`(?:\s*\(([^)]*)\))?\s+VALUES\s*")?;
+    let starts = Regex::new(r"(?mi)^[ \t]*(?:INSERT|REPLACE)\b")?;
+    let mut tables = schemas
+        .keys()
+        .filter(|name| !wordpress_only || allowed.contains(*name))
+        .map(|name| (name.clone(), Vec::new()))
+        .collect::<Tables>();
+    let mut consumed = 0;
+    for start in starts.find_iter(sql) {
+        if start.start() < consumed {
+            continue;
+        }
+        let cap = insert.captures(&sql[start.start()..]).context(
+            "unsupported SQL row statement; use a standard mysqldump INSERT/VALUES export",
+        )?;
+        let begin = start.start() + cap.get(0).unwrap().end();
+        let end = statement_end(sql, begin)?;
+        consumed = end + 1;
+        if wordpress_only && !allowed.contains(&cap[1]) {
+            continue;
+        }
+        let schema = schemas
             .get(&cap[1])
             .context("INSERT without CREATE TABLE schema")?;
-        for row in tuples(&cap[2])? {
+        let columns = cap
+            .get(2)
+            .map(|list| {
+                identifier
+                    .captures_iter(list.as_str())
+                    .map(|c| c[1].to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| schema.clone());
+        ensure!(
+            !columns.is_empty() && columns.iter().all(|name| schema.contains(name)),
+            "unknown or empty INSERT column list"
+        );
+        for row in tuples(&sql[begin..end])? {
             ensure!(
                 row.len() == columns.len(),
                 "column count mismatch in {}",
@@ -38,11 +99,30 @@ pub fn parse(sql: &str) -> Result<Tables> {
                 .push(columns.iter().cloned().zip(row).collect());
         }
     }
-    ensure!(
-        tables.contains_key("wp_posts"),
-        "expected wp_posts table; custom table prefixes not yet supported"
-    );
     Ok(tables)
+}
+
+fn statement_end(sql: &str, begin: usize) -> Result<usize> {
+    let bytes = sql.as_bytes();
+    let mut quoted = false;
+    let mut i = begin;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if quoted => {
+                i += 2;
+                continue;
+            }
+            b'\'' if quoted && bytes.get(i + 1) == Some(&b'\'') => {
+                i += 2;
+                continue;
+            }
+            b'\'' => quoted = !quoted,
+            b';' if !quoted => return Ok(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    bail!("unterminated SQL INSERT statement")
 }
 
 fn tuples(input: &str) -> Result<Vec<Vec<String>>> {
@@ -144,5 +224,20 @@ mod tests {
         assert_eq!(rows[0], ["1", "oração, (texto)\n'citação'", ""]);
         assert_eq!(rows[1], ["2", "a\\b", "it's"]);
         assert!(tuples("(1,'unfinished)").is_err());
+    }
+}
+
+#[cfg(test)]
+mod reusable_dump_tests {
+    use super::*;
+    #[test]
+    fn multiline_rows_explicit_columns_and_literal_semicolons_are_data() {
+        let dump = "CREATE TABLE IF NOT EXISTS `custom_posts` (\n `ID` bigint,\n `body` text\n) ENGINE=InnoDB;\nINSERT INTO `custom_posts` (`body`, `ID`) VALUES\n('one; it''s text', 1),\n('two\\nlines', 2);\n";
+        let tables = parse(dump).unwrap();
+        assert_eq!(tables["custom_posts"][0]["body"], "one; it's text");
+        assert_eq!(tables["custom_posts"][1]["ID"], "2");
+        assert_eq!(tables["custom_posts"][1]["body"], "two\nlines");
+        assert!(parse(&dump.replace("INSERT INTO", "REPLACE INTO")).is_err());
+        assert!(parse(&dump.replace("('one; it''s text', 1)", "('unterminated, 1)")).is_err());
     }
 }
