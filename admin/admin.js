@@ -4,6 +4,7 @@
 
   const $ = id => document.getElementById(id);
 
+  let contentSection="post";
   let sidebarRevision="", sidebarDirty=false;
   let deployment = null, catalogRevision = "", selectedRevision = null;
 
@@ -230,10 +231,10 @@
 
   function renderEntries() {
 
-    const query=normalize($("filter").value), filter=$("status-filter").value;
+    const query=normalize($("filter").value), filter=contentSection==="trash" ? "trash" : $("status-filter").value;
     $("empty-trash").hidden=filter!=="trash";$("empty-trash").disabled=!entries.some(e=>e.trashed);
 
-    const visible=entries.filter(e => normalize(e.title).includes(query) && (filter==="trash" ? e.trashed : !e.trashed) && (filter==="trash" || filter==="all" || (filter==="page" ? e.kind==="page" : filter==="draft" ? e.has_saved_draft : e.status==="published"))).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
+    const visible=entries.filter(e => normalize(e.title).includes(query) && (contentSection==="trash" || e.kind===contentSection) && (filter==="trash" ? e.trashed : !e.trashed) && (filter==="trash" || filter==="all" || (filter==="draft" ? e.has_saved_draft : e.status==="published"))).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
 
     $("list-count").textContent=`${visible.length} item(ns)`;$("articles").replaceChildren();
 
@@ -253,6 +254,20 @@
 
   $("filter").oninput=renderEntries;$("status-filter").onchange=renderEntries;
 
+  function selectContentSection(section) {
+    if(section!==contentSection&&doc){
+      if(!allowSwitch())return;
+      clearTimeout(previewTimer);++previewGeneration;doc=null;dirty=false;
+      $("editor").hidden=true;$("empty").hidden=false;
+    }
+    contentSection=section;$("status-filter").value="all";
+    for(const button of document.querySelectorAll("[data-content-section]"))button.setAttribute("aria-pressed",String(button.dataset.contentSection===section));
+    $("new-article").hidden=section!=="post";$("new-page").hidden=section!=="page";
+    $("status-filter").hidden=section==="trash";$("status-filter-label").hidden=section==="trash";
+    renderEntries();
+  }
+  for(const button of document.querySelectorAll("[data-content-section]"))button.onclick=()=>selectContentSection(button.dataset.contentSection);
+
   function allowSwitch() {return !dirty || confirm("Há alterações não salvas. Deseja abrir outro artigo?");}
 
   async function selectEntry(id) {if(!allowSwitch())return;setDocument(await api(`/api/articles/${encodeURIComponent(id)}`));}
@@ -271,11 +286,13 @@
 
     $("categories").replaceChildren();for(const cat of categories){const option=document.createElement("option");option.value=cat.slug;option.textContent=cat.name;option.selected=m.categories.includes(cat.slug);$("categories").append(option);}
 
+    $("entry-categories").hidden=m.kind==="page";
     const generated=m.listings.length>0;$("publish").hidden=!deployment?.enabled;$("publish").disabled=data.trashed;$("html").readOnly=generated;$("save").disabled=data.trashed;$("entry-state").textContent=generated ? "Página com lista automática" : data.publication_status==="published" ? (data.has_saved_draft ? "Conteúdo publicado · alterações em rascunho" : "Conteúdo publicado · sem alterações pendentes") : "Rascunho privado";
 
     for(const field of $("editor").querySelectorAll("input,textarea,select"))field.disabled=data.trashed;
 
     $("insert-more").disabled=data.trashed||generated;
+    for(const button of document.querySelectorAll("[data-html-format]"))button.disabled=data.trashed||generated;
     $("trash-entry").textContent=data.trashed ? "Restaurar da lixeira" : "Mover para lixeira";
     $("trash-hint").textContent=data.trashed ? "Este conteúdo está na lixeira editorial. Uma versão já publicada continua disponível." : "Mover para a lixeira não apaga versões, imagens nem páginas publicadas.";
     $("dirty").textContent="";renderEntries();schedulePreview();loadRevisions(data.metadata.id).catch(e=>notice(e.message,true));
@@ -389,6 +406,31 @@
   }
   $("create-category").onclick=()=>busy($("create-category"),async()=>{await api("/api/categories",{method:"POST",body:JSON.stringify({revision:catalogRevision,name:$("category-name").value,slug:$("category-slug").value})});$("category-name").value="";$("category-slug").value="";await loadCategories();if(doc&&!dirty)setDocument(await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`));notice("Categoria criada.");});
 
+  function formatHtml(field, format, href) {
+    const start=field.selectionStart,end=field.selectionEnd,selected=field.value.slice(start,end);
+    let text;
+    if(format==="a") {
+      if(!href)return false;
+      href=href.trim();
+      if(!/^(https?:\/\/|mailto:|\/(?!\/)|#)/i.test(href))throw new Error("Use um endereço https://, http://, mailto:, / ou #.");
+      const escaped=href.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      text=`<a href="${escaped}">${selected||"Texto do link"}</a>`;
+    } else if(format==="ul"||format==="ol") {
+      const items=(selected||"Item da lista").split(/\r?\n/).filter(line=>line.trim()).map(line=>`  <li>${line}</li>`).join("\n");
+      text=`<${format}>\n${items}\n</${format}>`;
+    } else {
+      if(!["p","strong","em","u"].includes(format))return false;
+      text=`<${format}>${selected||"Texto"}</${format}>`;
+    }
+    field.setRangeText(text,start,end,"end");field.focus();return true;
+  }
+  for(const button of document.querySelectorAll("[data-html-format]"))button.onclick=()=>{
+    if(!doc||doc.trashed||$("html").readOnly)return;
+    try{const format=button.dataset.htmlFormat,href=format==="a" ? prompt("Endereço do link (https://… ou /caminho/):","https://") : null;
+      if(formatHtml($("html"),format,href))edit();
+    }catch(error){notice(error.message,true);}
+  };
+
   $("insert-more").onclick=()=>{
     if(!doc||doc.trashed||$("html").readOnly)return;
     const field=$("html");field.setRangeText("<!--more-->",field.selectionStart,field.selectionEnd,"end");field.focus();edit();
@@ -444,7 +486,7 @@
     $("path-hint").textContent="Endereço personalizado; será verificado ao salvar.";
   });
 
-  function fields() {return {auto_permalink:autoPermalink&&!$("permalink").readOnly,title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:[...$("categories").selectedOptions].map(o=>o.value),featured_image:null,featured_image_alt:"",featured_image_caption:""};}
+  function fields() {return {auto_permalink:autoPermalink&&!$("permalink").readOnly,title:$("title").value,html:$("html").value,permalink:$("permalink").value.trim()||null,published_local:$("published-local").value.length===16 ? $("published-local").value+":00" : $("published-local").value,categories:doc?.metadata.kind==="page" ? [] : [...$("categories").selectedOptions].map(o=>o.value),featured_image:null,featured_image_alt:"",featured_image_caption:""};}
 
   $("editor").onsubmit=event=>{event.preventDefault();busy($("save"),async()=>{notice("Salvando rascunho…");const result=await api(`/api/articles/${encodeURIComponent(doc.metadata.id)}`,{method:"PUT",body:JSON.stringify({...fields(),revision:doc.revision})});setDocument(result);await refreshAfterSuccess("Rascunho salvo. O site não foi alterado.",refreshEntries);});};
 

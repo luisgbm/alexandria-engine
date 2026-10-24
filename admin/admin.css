@@ -30,3 +30,8 @@ body{padding-bottom:7rem}
 @keyframes admin-progress-pulse{0%,100%{opacity:.25}50%{opacity:.85}}
 
 @media(max-width:40rem){.top{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:.5rem .6rem;padding:1rem;align-items:center}.top>div{grid-column:2/4;grid-row:1;margin-left:0}.top .eyebrow{white-space:nowrap}.top .badge{grid-column:2;grid-row:2;margin-left:0;justify-self:start;max-width:100%;white-space:normal}.top>#logout{grid-column:3;grid-row:2}.admin-menu-toggle{position:static;grid-column:1;grid-row:1;align-self:center}}
+
+/* Content navigation and source editor tools. */
+.content-menu{display:flex;flex-wrap:wrap;gap:.35rem;margin:1rem 0}.content-menu button{flex:1;background:transparent;color:var(--ink);border-color:var(--line);padding:.6rem .4rem;font-size:.9rem;white-space:nowrap}.content-menu button[aria-pressed=true]{background:var(--green);border-color:var(--green);color:white}.content-create{margin:0 0 1rem}.content-create button{width:100%}.html-toolbar{display:flex;flex-wrap:wrap;gap:.4rem;margin:.7rem 0}.html-toolbar button{background:var(--paper);color:var(--green);border-color:var(--line);padding:.4rem .65rem;min-width:2.6rem;min-height:44px}.html-toolbar button:hover{background:#e8eee6}.library #status-filter-label{margin-top:.75rem}
+
+.editor-actions{display:flex;flex-wrap:wrap;gap:.6rem;margin-left:auto}
