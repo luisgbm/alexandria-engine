@@ -35,3 +35,5 @@ body{padding-bottom:env(safe-area-inset-bottom,0px)}
 .content-menu{display:flex;flex-wrap:wrap;gap:.35rem;margin:1rem 0}.content-menu button{flex:1;background:transparent;color:var(--ink);border-color:var(--line);padding:.6rem .4rem;font-size:.9rem;white-space:nowrap}.content-menu button[aria-pressed=true]{background:var(--green);border-color:var(--green);color:white}.content-create{margin:0 0 1rem}.content-create button{width:100%}.html-toolbar{display:flex;flex-wrap:wrap;gap:.4rem;margin:.7rem 0}.html-toolbar button{background:var(--paper);color:var(--green);border-color:var(--line);padding:.4rem .65rem;min-width:2.6rem;min-height:44px}.html-toolbar button:hover{background:#e8eee6}.library #status-filter-label{margin-top:.75rem}
 
 .editor-actions{display:flex;flex-wrap:wrap;gap:.6rem;margin-left:auto}
+
+.security-controls{padding:0;margin:0}
