@@ -461,3 +461,15 @@ fn wordpress_more_sets_the_home_cutoff_and_preserves_the_complete_article() {
         assert!(article.contains("<!--more-->"));
     }
 }
+
+#[test]
+fn native_starter_builds_without_wordpress() {
+    let temp = tempfile::tempdir().unwrap();
+    let content = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starter-content");
+    let output = temp.path().join("release");
+    build::run(&content, &output).unwrap();
+    let homepage = fs::read_to_string(output.join("public/index.html")).unwrap();
+    assert!(homepage.contains("My publication"));
+    assert!(!homepage.contains("Example publication"));
+    assert!(output.join("public/sitemap.xml").exists());
+}

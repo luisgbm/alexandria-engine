@@ -75,18 +75,15 @@ pub(super) fn available(
     // Treat slash variants as the same address.
     let occupied: std::collections::BTreeSet<_> =
         occupied.iter().map(|p| p.trim_end_matches('/')).collect();
-    if let Some(current) = current {
-        if let Some(suffix) = current
+    if let Some(current) = current
+        && let Some(suffix) = current
             .strip_prefix(&format!("{base}-"))
             .and_then(|s| s.strip_suffix('/'))
-        {
-            if suffix.len() == 6
-                && suffix.bytes().all(|b| b.is_ascii_hexdigit())
-                && !occupied.contains(current.trim_end_matches('/'))
-            {
-                return Ok(current.into());
-            }
-        }
+        && suffix.len() == 6
+        && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+        && !occupied.contains(current.trim_end_matches('/'))
+    {
+        return Ok(current.into());
     }
     let mut candidate = format!("{base}/");
     while occupied.contains(candidate.trim_end_matches('/')) {

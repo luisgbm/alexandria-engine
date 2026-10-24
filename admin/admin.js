@@ -4,6 +4,7 @@
 
   const $ = id => document.getElementById(id);
 
+  let siteTitle="Alexandria";
   let contentSection="post";
   let sidebarRevision="", sidebarDirty=false;
   let deployment = null, catalogRevision = "", selectedRevision = null;
@@ -154,7 +155,12 @@
   });
 
   const pages = {"/":"statistics","/content/":"content","/images/":"images","/appearance/":"appearance","/categories/":"categories","/publications/":"publications","/security/":"security"};
+  function updateAdminTitle(){
+    document.title = `${document.querySelector('.admin-nav a[aria-current]')?.textContent || "Administração"} · ${siteTitle}`;
+  }
   function identity(data) {
+    siteTitle=data.site?.title || data.site_title || siteTitle;
+    $("site-name").textContent=siteTitle;updateAdminTitle();
     environment = data.environment; environmentLabel = data.environment_label;
     $("environment-badge").textContent = environmentLabel;
     $("publish").textContent = environment === "production" ? "Publicar" : "Publicar no staging";
@@ -165,7 +171,7 @@
     if(push) history.pushState(null,"",path);
     for(const panel of document.querySelectorAll("[data-page]")) panel.hidden=panel.dataset.page!==name;
     for(const link of document.querySelectorAll(".admin-nav a")) {if(link.pathname===path)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");}
-    document.title = `${document.querySelector('.admin-nav a[aria-current]')?.textContent || "Administração"} · Alexandria`;
+    updateAdminTitle();
     if(name==="statistics")await loadAnalytics();
     if(name==="content"){await loadCategories();await loadDeployments();await refreshEntries();}
     if(name==="categories")await loadCategories();

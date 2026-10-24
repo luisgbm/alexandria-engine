@@ -3,7 +3,7 @@ name = "alexandria-engine"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Portable WordPress import and deterministic static publishing"
+description = "A portable publishing engine with passkey administration and validated static releases"
 
 [dependencies]
 anyhow = "1"

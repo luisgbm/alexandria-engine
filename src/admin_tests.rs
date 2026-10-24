@@ -516,6 +516,7 @@ async fn production_identity_and_duplicate_featured_preview() {
     let mutable = Arc::get_mut(&mut app).unwrap();
     mutable.environment = "production".into();
     mutable.environment_label = "Produção".into();
+    mutable.store.lock().unwrap().site.title = "Outra publicação".into();
     let (_, _, status) = call(
         &app,
         "GET",
@@ -527,6 +528,7 @@ async fn production_identity_and_duplicate_featured_preview() {
     .await;
     assert_eq!(status["staging"], false);
     assert_eq!(status["environment"], "production");
+    assert_eq!(status["site_title"], "Outra publicação");
     let (cookie, csrf) = authenticated(&app);
     let (_, _, session) = call(
         &app,

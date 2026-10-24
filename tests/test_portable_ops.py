@@ -68,6 +68,28 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('access_log off;', rendered['nginx.conf'])
         self.assertIn('error_log /dev/null crit;', rendered['nginx.conf'])
 
+    def test_publication_title_is_optional_validated_and_applied_to_catalogs(self):
+        config = self.load({'site_title': '  Arquivo & Memória  '})
+        self.assertEqual(config['site_title'], 'Arquivo & Memória')
+        for title in ['', '   ', 'a' * 161, 'bad\nname', 'bad\x7fname', 12, None]:
+            with self.assertRaises(ValueError):
+                self.load({'site_title': title})
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'editorial').mkdir()
+            original = {'title': 'Original', 'base_url': 'https://old.example.org', 'navigation': []}
+            for name in ['site.json', 'editorial/site.json']:
+                (root / name).write_text(json.dumps(original), encoding='utf-8')
+            deploy.configure_content(root, config)
+            for name in ['site.json', 'editorial/site.json']:
+                actual = json.loads((root / name).read_text(encoding='utf-8'))
+                self.assertEqual(actual['title'], 'Arquivo & Memória')
+                self.assertEqual(actual['base_url'], config['canonical_url'])
+                self.assertEqual(actual['navigation'], [])
+            del config['site_title']
+            deploy.configure_content(root, config)
+            self.assertEqual(json.loads((root / 'site.json').read_text(encoding='utf-8'))['title'], 'Arquivo & Memória')
+
     def test_repository_archive_names(self):
         self.assertTrue(pc.valid_name('config'))
         self.assertTrue(pc.valid_name('data/ab/' + 'a' * 64))

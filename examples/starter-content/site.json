@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "title": "My publication",
+  "base_url": "https://www.example.org",
+  "timezone": "America/Sao_Paulo",
+  "page_size": 10,
+  "categories": [
+    {
+      "id": "1",
+      "name": "Artigos",
+      "slug": "artigos",
+      "parent": "0"
+    }
+  ],
+  "authors": [
+    {
+      "id": "1",
+      "name": "Editor",
+      "slug": "editor"
+    }
+  ],
+  "navigation": [
+    {
+      "title": "Início",
+      "path": "/"
+    }
+  ],
+  "redirects": {},
+  "expected_missing": [],
+  "observed_paths": [],
+  "banner": null
+}

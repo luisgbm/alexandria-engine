@@ -1,7 +1,8 @@
 {
+  "site_title": "My publication",
   "schema_version": 1,
-  "instance": "culture-stage",
-  "root": "/srv/alexandria-instances/culture-stage",
+  "instance": "publication-stage",
+  "root": "/srv/alexandria-instances/publication-stage",
   "environment": "staging",
   "public_url": "https://stage.example.org",
   "canonical_url": "https://www.example.org",
@@ -14,7 +15,9 @@
   "public_key": "/etc/letsencrypt/live/stage.example.org/privkey.pem",
   "admin_certificate": "/etc/letsencrypt/live/admin-stage.example.org/fullchain.pem",
   "admin_key": "/etc/letsencrypt/live/admin-stage.example.org/privkey.pem",
-  "backup_extra_paths": ["/etc/letsencrypt"],
+  "backup_extra_paths": [
+    "/etc/letsencrypt"
+  ],
   "backup_calendar": "*-*-01 05:00:00 UTC",
   "backup_keep_monthly": 12,
   "health_interval": "5min"

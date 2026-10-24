@@ -523,16 +523,15 @@ impl Publisher {
             if let Some(entry) = published
                 .get(id)
                 .filter(|entry| entry.metadata.status == "published")
+                && !store.root.join("editorial").join(id).join("draft").exists()
             {
-                if !store.root.join("editorial").join(id).join("draft").exists() {
-                    doc.revision = digest(&format!(
-                        "{}\0{}",
-                        serde_json::to_string(&entry.metadata)?,
-                        entry.body
-                    ));
-                    doc.metadata = entry.metadata.clone();
-                    doc.html = html::normalize_more(&entry.body);
-                }
+                doc.revision = digest(&format!(
+                    "{}\0{}",
+                    serde_json::to_string(&entry.metadata)?,
+                    entry.body
+                ));
+                doc.metadata = entry.metadata.clone();
+                doc.html = html::normalize_more(&entry.body);
             }
             doc.permalink_locked |= doc.publication_status == "published"
                 || store

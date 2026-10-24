@@ -21,7 +21,7 @@ import sys
 import tarfile
 from urllib.parse import urlsplit
 
-FIELDS = {'schema_version', 'instance', 'root', 'environment', 'public_url', 'canonical_url',
+FIELDS = {'site_title', 'schema_version', 'instance', 'root', 'environment', 'public_url', 'canonical_url',
           'admin_origin', 'public_bind', 'admin_bind', 'http_bind', 'backend_bind',
           'public_certificate', 'public_key', 'admin_certificate', 'admin_key',
           'backup_extra_paths', 'backup_calendar', 'backup_keep_monthly', 'health_interval'}
@@ -70,6 +70,11 @@ def load(path):
     require(c.get('environment') in ['staging', 'production'], 'invalid environment')
     public, admin = origin(c['public_url']), origin(c['admin_origin'], admin=True)
     origin(c['canonical_url'])
+    if 'site_title' in c:
+        title = c['site_title']
+        require(isinstance(title, str) and 1 <= len(title.strip()) <= 160
+                and not any(ord(char) < 32 or ord(char) == 127 for char in title), 'invalid site title')
+        c['site_title'] = title.strip()
     require(c['public_url'] != c['admin_origin'], 'public and admin origins must differ')
     require(c['public_bind'] != c['admin_bind'] or public.hostname != admin.hostname, 'shared bind requires distinct hostnames')
     for name in ['public_bind', 'admin_bind', 'backend_bind']:
@@ -308,6 +313,18 @@ endscript
     return files
 
 
+def configure_content(content, c):
+    """Apply instance identity to the installed copy, including an editorial catalog."""
+    for site in [content / 'site.json', content / 'editorial/site.json']:
+        if not site.exists() and site.parent.name == 'editorial':
+            continue
+        metadata = json.loads(site.read_text(encoding='utf-8'))
+        metadata['base_url'] = c['canonical_url']
+        if 'site_title' in c:
+            metadata['title'] = c['site_title']
+        write(site, json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')
+
+
 def installed_config(c):
     return Path(c['root']) / 'etc/deployment.json'
 
@@ -353,10 +370,7 @@ def install(c, args):
         (root / directory).mkdir(mode=0o700)
     execute('useradd', '--system', '--user-group', '--no-create-home', '--shell', '/usr/sbin/nologin', user)
     shutil.copytree(content, root / 'data/content')
-    site = root / 'data/content/site.json'
-    metadata = json.loads(site.read_text())
-    metadata['base_url'] = c['canonical_url']
-    write(site, json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')
+    configure_content(root / 'data/content', c)
     for directory in ['data/state', 'data/analytics', 'data/content/editorial', 'data/content/media/uploads']:
         (root / directory).mkdir(parents=True, exist_ok=True, mode=0o700)
     shutil.copy2(binary, root / 'bin/alexandria-engine')

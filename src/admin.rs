@@ -853,8 +853,9 @@ fn router(app: Shared) -> Router {
 
 async fn status(State(app): State<Shared>) -> ApiResult<Json<serde_json::Value>> {
     let initialized = count_credentials(&app.db.lock().unwrap())? > 0;
+    let site_title = app.store.lock().unwrap().site.title.clone();
     Ok(Json(
-        serde_json::json!({"initialized":initialized,"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label,"origin":app.origin,"passkeys_required":2}),
+        serde_json::json!({"initialized":initialized,"site_title":site_title,"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label,"origin":app.origin,"passkeys_required":2}),
     ))
 }
 async fn session(
