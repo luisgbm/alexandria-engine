@@ -642,3 +642,39 @@ metadata and public site settings were checked unchanged. Recovery copy:
 `/root/alexandria-before-author-polish-20261023T235753Z`. Screenshots:
 `admin-validation/author-page-polish-desktop-20261023.png` and
 `admin-validation/author-page-polish-mobile-20261023.png`.
+
+
+## Books page presentation
+
+The `/livros/` page keeps all fifteen works, their original descriptions, cover
+URLs and six existing publisher destinations. Each work now has a compact cover,
+a title and publication line, a short excerpt, and a visible action. Publisher
+links are labeled **Ver na editora** rather than hidden behind the covers. Other
+works offer **Consultar por e-mail**, pointing to the original contact image and
+instructions in **Como adquirir os livros** at the bottom of the same page.
+No purchase destination or email address was invented.
+
+Native `details`/`summary` controls retain the complete original description
+without JavaScript. Expanding one hides its duplicate excerpt and changes the
+control label to **Recolher apresentação**. The HTML sanitizer now explicitly
+preserves these passive semantic elements while continuing to strip scripts and
+event handlers. A regression test covers that behavior. Desktop pairs 200px
+covers with text; mobile stacks them. All styles use book-specific classes.
+
+
+Books refresh verified on staging release `release-20261024T000626-2907b7b3a8b9`.
+All fifteen complete descriptions were compared with the previous page; all
+six publisher URLs and sixteen image URLs (covers plus contact image) were
+preserved. Other article/page records and site settings were verified unchanged.
+Browser checks confirmed 200px loaded covers, desktop columns, mobile stacking,
+expand/collapse with duplicate excerpt hidden, six visible publisher actions,
+and contact shortcuts landing on `/livros/#contato-livros` without leaving the
+page. No horizontal overflow. Explicit page paths are required for fragment
+links because sanitizer URL normalization resolves bare fragments at site root.
+
+49 Rust tests passed, including native disclosure sanitization; one unrelated
+root-only recovery test remains intentionally ignored. Private recovery copies:
+`/root/alexandria-before-books-polish-20261024T000456Z` and
+`/root/alexandria-before-books-contact-link-20261024T000626Z`.
+Screenshots: `admin-validation/books-page-polish-desktop-20261023.png` and
+`admin-validation/books-page-polish-mobile-20261023.png`.
