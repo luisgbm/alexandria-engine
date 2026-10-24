@@ -365,7 +365,7 @@ pub fn sanitize(input: &str, base: &str) -> String {
     let mut cleaner = ammonia::Builder::default();
     cleaner
         .strip_comments(false)
-        .add_tags(["figure", "figcaption", "u", "center"])
+        .add_tags(["figure", "figcaption", "u", "center", "details", "summary"])
         .add_generic_attributes(["class", "style", "id"])
         .add_tag_attributes("a", ["name"])
         .add_tag_attributes(
@@ -416,6 +416,20 @@ pub fn banner(snapshot: &str, base: &str) -> Option<String> {
 mod tests {
     use super::*;
     const BASE: &str = "https://www.example.com";
+
+    #[test]
+    fn book_descriptions_keep_native_disclosure_without_active_content() {
+        let clean = sanitize(
+            r#"<details class="book-details" onclick="evil()"><summary>Read description</summary><p>Complete <em>description</em>.</p><script>evil()</script></details>"#,
+            BASE,
+        );
+        assert!(
+            clean.contains("<details class=\"book-details\"><summary>Read description</summary>")
+        );
+        assert!(clean.contains("<p>Complete <em>description</em>.</p></details>"));
+        assert!(!clean.contains("onclick"));
+        assert!(!clean.contains("<script"));
+    }
 
     #[test]
     fn upgrading_previous_default_recovers_original_smaller_dimensions() {
