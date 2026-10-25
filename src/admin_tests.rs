@@ -1995,6 +1995,8 @@ async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media(
         r#"{"homepage_sidebar_html":"<img src='/uploads/sidebar.png'>"}"#,
     )
     .unwrap();
+    app.store.lock().unwrap().site.homepage_sidebar_html =
+        "<img src='/uploads/sidebar.png'>".into();
     app.store
         .lock()
         .unwrap()
@@ -2075,42 +2077,50 @@ async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media(
         let (status,_,updated)=call(&app,"PUT","/api/library",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"alt":"","caption":"","deleted":true})).await;
         assert_eq!(status, StatusCode::OK);
         revision = updated["revision"].clone();
-        if path != "/uploads/free.png" {
-            let (blocked_status, _, blocked) = call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await;
-            assert_eq!(blocked_status, StatusCode::CONFLICT);
-            let uses = blocked["references"].as_array().unwrap();
-            assert!(!uses.is_empty());
-            if path == "/uploads/draft.png" || path == "/wp-content/uploads/imported.png" {
-                assert!(uses.iter().any(|u| u["title"] == "Original"
-                    && u["kind"] == "post"
-                    && u["permalink"] == "/artigos/original/"));
-            }
-            if path == "/uploads/history.png" {
-                assert!(uses.iter().any(|u| {
-                    u["title"] == "Página de histórico"
-                        && u["kind"] == "page"
-                        && u["contexts"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|c| c == "Histórico editorial")
-                }));
-            }
-            if path == "/uploads/sidebar.png" {
-                assert!(uses.iter().any(|u| u["kind"] == "settings"));
-            }
-            assert!(
-                !blocked
-                    .to_string()
-                    .contains(temp.path().to_string_lossy().as_ref())
-            );
+        if path == "/uploads/draft.png" || path == "/uploads/sidebar.png" {
+            let (status, _, blocked) = call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert!(blocked["references"].as_array().unwrap().iter().any(|u| {
+                if path.contains("draft") {
+                    u["title"] == "Original"
+                } else {
+                    u["kind"] == "settings"
+                }
+            }));
+        } else if path != "/uploads/free.png" {
+            let (status, _, result) = call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(result["retained_for_history"], true);
             assert!(
                 root.join("media")
                     .join(path.trim_start_matches('/'))
                     .exists()
             );
+            for view in ["/api/library", "/api/library?deleted=true"] {
+                let list = call(
+                    &app,
+                    "GET",
+                    view,
+                    Some(&cookie),
+                    None,
+                    serde_json::json!({}),
+                )
+                .await
+                .2;
+                assert!(
+                    list["images"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|image| image["path"] != path)
+                );
+                revision = list["revision"].clone();
+            }
+            let status=call(&app,"PUT","/api/library",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"alt":"","caption":"","deleted":false})).await.0;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
         }
     }
+
     let mut payload =
         serde_json::json!({"path":"/uploads/free.png","revision":revision,"confirmation":"wrong"});
     assert_eq!(

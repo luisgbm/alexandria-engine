@@ -213,6 +213,28 @@ impl Publisher {
         }
         Ok(false)
     }
+    pub(super) fn active_media_usages(&self, path: &str) -> Result<Vec<library::Usage>> {
+        relative_path(path)?;
+        let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+        let root = self.root.join("snapshots").join(self.active()?);
+        let mut uses = library::site_usage(
+            &read_site(&root.join("site.json"))?,
+            &decoded,
+            "Publicação atual",
+        );
+        for entry in load_entries(&root)?
+            .iter()
+            .filter(|e| e.metadata.status == "published")
+        {
+            uses.extend(library::document_usage(
+                &entry.metadata,
+                &entry.body,
+                &decoded,
+                "Publicação atual",
+            ));
+        }
+        Ok(library::merge_usages(uses))
+    }
     pub(super) fn media_usages(&self, path: &str) -> Result<Vec<library::Usage>> {
         relative_path(path)?;
         let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
@@ -233,7 +255,14 @@ impl Publisher {
                 "Publicação anterior (rollback)"
             };
             for mut usage in library::references(&entry.path(), &decoded)? {
-                usage.contexts = std::collections::BTreeSet::from([context.into()]);
+                let context = if usage.contexts.len() == 1
+                    && usage.contexts.contains("Metadados preservados")
+                {
+                    format!("{context} · somente metadados preservados")
+                } else {
+                    context.into()
+                };
+                usage.contexts = std::collections::BTreeSet::from([context]);
                 uses.push(usage);
             }
         }
@@ -1012,6 +1041,43 @@ mod publishing_tests {
             && u.kind == "page"
             && u.contexts.contains("Publicação anterior (rollback)")));
         assert!(p.retained_media("/../secret.png").is_err());
+    }
+    #[test]
+    fn active_media_references_exclude_previous_snapshots_and_preserved_sources() {
+        let (_temp, p, _content, _doc) = setup();
+        let current = p.root.join("snapshots/baseline/articles/wp-1");
+        fs::write(
+            current.join("wordpress-source.html"),
+            "<img src='/uploads/old.png'>",
+        )
+        .unwrap();
+        let prior = p.root.join("snapshots/previous/articles/old");
+        fs::create_dir_all(&prior).unwrap();
+        fs::write(prior.join("body.html"), "<img src='/uploads/old.png'>").unwrap();
+        assert!(
+            p.active_media_usages("/uploads/old.png")
+                .unwrap()
+                .is_empty()
+        );
+        fs::write(current.join("body.html"), "<img src='/uploads/old.png'>").unwrap();
+        let uses = p.active_media_usages("/uploads/old.png").unwrap();
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].id.as_deref(), Some("wp-1"));
+        assert!(uses[0].contexts.contains("Publicação atual"));
+    }
+    #[test]
+    fn historical_metadata_reference_does_not_claim_current_article_body_use() {
+        let (_temp, p, _content, _doc) = setup();
+        let prior = p.root.join("snapshots/old/pages/deleted-page");
+        fs::create_dir_all(&prior).unwrap();
+        write_json(&prior.join("metadata.json"),&serde_json::json!({"id":"deleted-page","title":"Página excluída","kind":"page","featured_image":"/uploads/old.png"})).unwrap();
+        let uses = p.media_usages("/uploads/old.png").unwrap();
+        assert_eq!(uses.len(), 1);
+        assert!(
+            uses[0]
+                .contexts
+                .contains("Publicação anterior (rollback) · somente metadados preservados")
+        );
     }
     #[test]
     fn image_cleanup_deploys_only_current_public_content_and_preserves_private_settings() {

@@ -381,22 +381,21 @@
     if(dirty)throw new Error("Salve ou descarte as alterações antes de esvaziar a lixeira.");
     const data=await api("/api/trash");trashRevision=data.revision;
     $("empty-trash-items").replaceChildren();for(const item of data.items){const li=document.createElement("li");li.textContent=item.title;$("empty-trash-items").append(li);}
-    $("empty-trash-confirmation").value="";$("confirm-empty-trash").disabled=true;
+    $("confirm-empty-trash").disabled=false;
     $("empty-trash-status").textContent=`${data.items.length} item(ns) na lixeira inteira, incluindo itens fora da busca atual.`;
     if(!data.items.length){await refreshEntries();notice("A lixeira já está vazia.");return;}
     $("empty-trash-dialog").showModal();
   });
   $("cancel-empty-trash").onclick=()=>$("empty-trash-dialog").close();
-  $("empty-trash-confirmation").oninput=()=>{$("confirm-empty-trash").disabled=$("empty-trash-confirmation").value!=="ESVAZIAR LIXEIRA";};
   $("empty-trash-form").onsubmit=async event=>{
-    event.preventDefault();const button=$("confirm-empty-trash");button.disabled=true;$("cancel-empty-trash").disabled=true;
+    event.preventDefault();const button=$("confirm-empty-trash");if(button.disabled)return;button.disabled=true;$("cancel-empty-trash").disabled=true;
     try{
-      const result=await api("/api/trash",{method:"POST",body:JSON.stringify({revision:trashRevision,confirmation:$("empty-trash-confirmation").value})});
+      const result=await api("/api/trash",{method:"POST",body:JSON.stringify({revision:trashRevision,confirmation:"ESVAZIAR LIXEIRA"})});
       $("empty-trash-dialog").close();
       if(doc?.trashed){doc=null;dirty=false;$("editor").hidden=true;$("empty").hidden=false;$("preview").srcdoc="";clearTimeout(previewTimer);previewGeneration++;}
       await refreshAfterSuccess(`${result.deleted} item(ns) excluído(s) da lixeira. Páginas publicadas e imagens foram preservadas.${result.cleanup_pending ? " A limpeza de arquivos privados precisa de revisão pelo operador." : ""}`,refreshEntries);
     }catch(error){$("empty-trash-status").textContent=error.message;}
-    finally{button.disabled=$("empty-trash-confirmation").value!=="ESVAZIAR LIXEIRA";$("cancel-empty-trash").disabled=false;}
+    finally{button.disabled=false;$("cancel-empty-trash").disabled=false;}
   };
 
   function refreshCategoryFilter(){
@@ -554,15 +553,14 @@
     }
   }
   let purgeTarget=null;
-  $("purge-image").onclick=()=>{purgeTarget=selectedImage;$("image-dialog").close();$("purge-image-name").textContent=purgeTarget.name||purgeTarget.path;$("purge-image-confirmation").value="";$("confirm-purge-image").disabled=true;$("purge-image-status").textContent="";showImageReferences([]);$("purge-image-dialog").showModal();};
+  $("purge-image").onclick=()=>{purgeTarget=selectedImage;$("image-dialog").close();$("purge-image-name").textContent=purgeTarget.name||purgeTarget.path;$("confirm-purge-image").disabled=false;$("purge-image-status").textContent="";showImageReferences([]);$("purge-image-dialog").showModal();};
   $("cancel-purge-image").onclick=()=>$("purge-image-dialog").close();
-  $("purge-image-confirmation").oninput=()=>{$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";};
   $("purge-image-form").onsubmit=async event=>{
-    event.preventDefault();if(!purgeTarget||$("purge-image-confirmation").value!=="EXCLUIR IMAGEM"||$("confirm-purge-image").disabled)return;
+    event.preventDefault();if(!purgeTarget||$("confirm-purge-image").disabled)return;
     $("confirm-purge-image").disabled=true;$("cancel-purge-image").disabled=true;$("purge-image-status").textContent="Verificando referências e excluindo…";
-    try {await api("/api/library/purge",{method:"POST",body:JSON.stringify({path:purgeTarget.path,revision:libraryRevision,confirmation:"EXCLUIR IMAGEM"})});$("purge-image-dialog").close();selectedImage=null;imageOffset=0;await refreshAfterSuccess("Imagem excluída definitivamente.",loadLibrary);}
+    try {const result=await api("/api/library/purge",{method:"POST",body:JSON.stringify({path:purgeTarget.path,revision:libraryRevision,confirmation:"EXCLUIR IMAGEM"})});$("purge-image-dialog").close();selectedImage=null;imageOffset=0;await refreshAfterSuccess(result.retained_for_history?"Imagem excluída da biblioteca. Cópias históricas foram preservadas.":"Imagem excluída definitivamente.",loadLibrary);}
     catch(error){$("purge-image-status").textContent=error.message;showImageReferences(error.references||[]);}
-    finally{$("cancel-purge-image").disabled=false;$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";}
+    finally{$("cancel-purge-image").disabled=false;$("confirm-purge-image").disabled=false;}
   };
   $("insert-image").onclick=()=>{if(!doc||doc.trashed||$("html").readOnly)return;const code="\n"+imageCode()+"\n";const field=$("html");field.setRangeText(code,field.selectionStart,field.selectionEnd,"end");edit();$("image-dialog").close();showPage("/content/",true).catch(e=>notice(e.message,true));notice("Imagem inserida no HTML. Salve o rascunho para manter a alteração.");};
   $("image-search").oninput=()=>{clearTimeout(searchTimer);imageOffset=0;searchTimer=setTimeout(()=>loadLibrary().catch(e=>notice(e.message,true)),300);};

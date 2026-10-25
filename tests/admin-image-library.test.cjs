@@ -24,3 +24,25 @@ test('API failures preserve structured image reference details',async()=>{
  vm.runInContext(source.slice(source.indexOf('  async function api('),source.indexOf('  function busy(')),ctx);
  await assert.rejects(ctx.api('/api/library/purge'),error=>error.message==='In use'&&error.references===refs);
 });
+const html=fs.readFileSync(require('node:path').join(__dirname,'../admin/index.html'),'utf8');
+test('permanent deletion dialogs use yes/no without typed confirmations',()=>{
+ assert.doesNotMatch(html,/id="(?:empty-trash|purge-image)-confirmation"/);
+ for(const id of ['cancel-purge-image','cancel-empty-trash'])assert.match(html,new RegExp(`id="${id}"[^>]*>Não, cancelar`));
+ for(const id of ['confirm-purge-image','confirm-empty-trash'])assert.match(html,new RegExp(`id="${id}"[^>]*>Sim,`));
+});
+test('image deletion waits for Yes, No only closes and history retention is explained',async()=>{
+ const nodes={};const get=id=>nodes[id]??={...make(),disabled:false,showModal(){this.open=true;},close(){this.open=false;}};let calls=0,message;
+ const ctx=vm.createContext({$:get,selectedImage:{path:'/uploads/test.png',name:'Test'},libraryRevision:'revision',imageOffset:0,showImageReferences(){},api:async(_,options)=>{calls++;assert.equal(JSON.parse(options.body).confirmation,'EXCLUIR IMAGEM');return {retained_for_history:true};},refreshAfterSuccess:async text=>{message=text;},loadLibrary(){}});
+ vm.runInContext(source.slice(source.indexOf('  let purgeTarget='),source.indexOf('  $("insert-image").onclick')),ctx);
+ get('purge-image').onclick();assert.equal(calls,0);assert.equal(get('confirm-purge-image').disabled,false);
+ get('cancel-purge-image').onclick();assert.equal(calls,0);assert.equal(get('purge-image-dialog').open,false);
+ get('purge-image').onclick();await get('purge-image-form').onsubmit({preventDefault(){}});
+ assert.equal(calls,1);assert.match(message,/históricas/);assert.equal(get('purge-image-dialog').open,false);
+});
+test('article trash No leaves content intact and Yes submits the reviewed revision',async()=>{
+ const nodes={};const get=id=>nodes[id]??={...make(),disabled:false,showModal(){this.open=true;},close(){this.open=false;}};let writes=0;
+ const ctx=vm.createContext({$:get,dirty:false,doc:null,document:{createElement:make},busy:async(_,fn)=>fn(),api:async(_,options)=>{if(!options)return {revision:'reviewed',items:[{title:'Test'}]};writes++;assert.equal(JSON.parse(options.body).revision,'reviewed');assert.equal(JSON.parse(options.body).confirmation,'ESVAZIAR LIXEIRA');return {deleted:1};},refreshEntries(){},refreshAfterSuccess:async()=>{},notice(){}});
+ vm.runInContext(source.slice(source.indexOf('  let trashRevision='),source.indexOf('  function refreshCategoryFilter(')),ctx);
+ await get('empty-trash').onclick();get('cancel-empty-trash').onclick();assert.equal(writes,0);
+ await get('empty-trash').onclick();await get('empty-trash-form').onsubmit({preventDefault(){}});assert.equal(writes,1);assert.equal(get('empty-trash-dialog').open,false);
+});

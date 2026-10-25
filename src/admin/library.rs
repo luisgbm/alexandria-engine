@@ -1,5 +1,6 @@
-//! Private image catalog. Referenced and retained media cannot be permanently deleted.
+//! Private image catalog. Current uses block removal; historical copies remain available.
 use super::*;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ImageMetadata {
@@ -9,6 +10,8 @@ struct ImageMetadata {
     caption: String,
     #[serde(default)]
     deleted: bool,
+    #[serde(default)]
+    purged: bool,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -62,6 +65,7 @@ pub(super) fn uploaded(root: &Path, path: &str, name: &str) -> Result<()> {
     );
     let item = data.entry(path.into()).or_default();
     item.deleted = false;
+    item.purged = false;
     // Persist upload order independently of hash-based filenames and filesystem copies.
     item.uploaded_at = Some(uploaded_at);
     if item.name.is_empty() {
@@ -177,10 +181,10 @@ pub(super) async fn list(
     let rows: Vec<_> = paths.iter().filter_map(|(path, _)| {
         let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
         let fallback = defaults.get(path.as_str()).or_else(|| defaults.get(decoded.as_ref())).map(|a| ImageMetadata {
-            alt: a.alt.clone(), caption: html::text(&a.caption), name: a.title.clone(), deleted: false, uploaded_at: None,
+            alt: a.alt.clone(), caption: html::text(&a.caption), name: a.title.clone(), deleted: false, purged: false, uploaded_at: None,
         }).unwrap_or_default();
         let meta = data.get(path).unwrap_or(&fallback);
-        if meta.deleted != query.deleted || !crate::build::normalize(&format!("{} {} {} {} {}", path, decoded, meta.name, meta.alt, meta.caption)).contains(&normalized) { return None; }
+        if meta.purged || meta.deleted != query.deleted || !crate::build::normalize(&format!("{} {} {} {} {}", path, decoded, meta.name, meta.alt, meta.caption)).contains(&normalized) { return None; }
         Some(serde_json::json!({"path":path,"name":meta.name,"alt":meta.alt,"caption":meta.caption,"deleted":meta.deleted,"uploaded_at":meta.uploaded_at}))
     }).collect();
     let total = rows.len();
@@ -216,12 +220,16 @@ pub(super) async fn update(
         ));
     }
     let old = data.get(&input.path).cloned().unwrap_or_default();
+    if old.purged {
+        return Err(bad("Imagem excluída definitivamente da biblioteca."));
+    }
     data.insert(
         input.path.clone(),
         ImageMetadata {
             alt: input.alt,
             caption: input.caption,
             deleted: input.deleted,
+            purged: false,
             name: old.name,
             uploaded_at: old.uploaded_at,
         },
@@ -248,6 +256,51 @@ pub(super) struct Usage {
     pub(super) kind: String,
     pub(super) permalink: Option<String>,
     pub(super) contexts: std::collections::BTreeSet<String>,
+}
+
+fn contains_path(text: &str, path: &str) -> bool {
+    percent_encoding::percent_decode_str(&text.replace("\\/", "/"))
+        .decode_utf8_lossy()
+        .contains(path)
+}
+pub(super) fn document_usage(
+    metadata: &Metadata,
+    body: &str,
+    path: &str,
+    context: &str,
+) -> Vec<Usage> {
+    if !contains_path(body, path)
+        && !metadata
+            .featured_image
+            .as_deref()
+            .is_some_and(|image| contains_path(image, path))
+    {
+        return Vec::new();
+    }
+    vec![Usage {
+        id: Some(metadata.id.clone()),
+        title: metadata.title.clone(),
+        kind: metadata.kind.clone(),
+        permalink: metadata.permalink.clone(),
+        contexts: BTreeSet::from([context.into()]),
+    }]
+}
+pub(super) fn site_usage(site: &Site, path: &str, context: &str) -> Vec<Usage> {
+    if !contains_path(&site.homepage_sidebar_html, path)
+        && !site
+            .banner
+            .as_deref()
+            .is_some_and(|image| contains_path(image, path))
+    {
+        return Vec::new();
+    }
+    vec![Usage {
+        id: None,
+        title: "Configuração do site (banner ou barra lateral)".into(),
+        kind: "settings".into(),
+        permalink: None,
+        contexts: BTreeSet::from([context.into()]),
+    }]
 }
 
 pub(super) fn merge_usages(items: Vec<Usage>) -> Vec<Usage> {
@@ -340,6 +393,11 @@ fn usage_for_file(root: &Path, file: &Path) -> Result<Usage> {
     } else {
         "Conteúdo de origem"
     };
+    let context = if file.file_name().is_some_and(|name| name == "metadata.json") {
+        "Metadados preservados"
+    } else {
+        context
+    };
     Ok(Usage {
         id: Some(id),
         title,
@@ -431,7 +489,10 @@ pub(super) async fn purge(
             "A biblioteca mudou. Atualize antes de continuar.".into(),
         ));
     }
-    if !data.get(&input.path).is_some_and(|image| image.deleted) {
+    if !data
+        .get(&input.path)
+        .is_some_and(|image| image.deleted && !image.purged)
+    {
         return Err(bad(
             "Remova a imagem da biblioteca antes de excluí-la definitivamente.",
         ));
@@ -443,33 +504,46 @@ pub(super) async fn purge(
         return Err(bad("Caminho de imagem inválido."));
     }
     let decoded = percent_encoding::percent_decode_str(&input.path).decode_utf8_lossy();
-    let mut uses = references(&store.root, &decoded)?;
+    let mut uses = Vec::new();
+    for doc in store.entries.values().filter(|doc| !doc.trashed) {
+        uses.extend(document_usage(
+            &doc.metadata,
+            &doc.html,
+            &decoded,
+            "Conteúdo atual",
+        ));
+    }
+    uses.extend(site_usage(&store.site, &decoded, "Configuração atual"));
     if let Some(publisher) = &app.publisher {
-        uses.extend(publisher.media_usages(&input.path)?);
+        uses.extend(publisher.active_media_usages(&input.path)?);
     }
     let uses = merge_usages(uses);
-    let imported = !input.path.starts_with("/uploads/");
-    if imported || !uses.is_empty() {
-        let message = if imported {
-            "Imagem protegida: fontes importadas do WordPress são preservadas. A exclusão definitiva foi bloqueada."
-        } else {
-            "Imagem em uso ou preservada em conteúdo, versões anteriores ou publicações. A exclusão definitiva foi bloqueada."
-        };
+    if !uses.is_empty() {
         return Ok((
             StatusCode::CONFLICT,
-            Json(serde_json::json!({"error":message,"references":uses})),
+            Json(serde_json::json!({
+                "error":"Imagem em uso no conteúdo atual. Remova as referências antes de excluir.",
+                "references":uses
+            })),
         )
             .into_response());
     }
-    fs::remove_file(&file).map_err(anyhow::Error::from)?;
-    data.remove(&input.path);
-    // The file deletion is authoritative. A metadata/audit refresh failure must
-    // not report deletion failure and encourage a second destructive attempt.
-    let cleanup_pending = save(&store.root, &data).is_err();
+    // Keep bytes needed by old revisions/rollback, but permanently hide this
+    // catalog entry from both library views. Old copies never block removal.
+    let retained = !references(&store.root, &decoded)?.is_empty()
+        || app
+            .publisher
+            .as_ref()
+            .map(|p| p.media_usages(&input.path).map(|u| !u.is_empty()))
+            .transpose()?
+            .unwrap_or(false);
+    data.get_mut(&input.path).unwrap().purged = true;
+    save(&store.root, &data)?;
+    let cleanup_pending = !retained && fs::remove_file(&file).is_err();
     if let Err(error) = audit(&app.db.lock().unwrap(), "library_image_purged", &input.path) {
         eprintln!("image purge audit failed: {error:#}");
     }
-    Ok(Json(serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending})).into_response())
+    Ok(Json(serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending,"retained_for_history":retained})).into_response())
 }
 
 #[cfg(test)]
