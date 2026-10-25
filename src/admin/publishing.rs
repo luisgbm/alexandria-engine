@@ -213,6 +213,44 @@ impl Publisher {
         }
         Ok(false)
     }
+    pub(super) fn media_usages(&self, path: &str) -> Result<Vec<library::Usage>> {
+        relative_path(path)?;
+        let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+        let active = self.active()?;
+        let mut uses = Vec::new();
+        for entry in fs::read_dir(self.root.join("snapshots"))? {
+            let entry = entry?;
+            ensure!(
+                !entry.file_type()?.is_symlink(),
+                "unexpected snapshot symlink"
+            );
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let context = if entry.file_name().to_string_lossy() == active {
+                "Publicação atual"
+            } else {
+                "Publicação anterior (rollback)"
+            };
+            for mut usage in library::references(&entry.path(), &decoded)? {
+                usage.contexts = std::collections::BTreeSet::from([context.into()]);
+                uses.push(usage);
+            }
+        }
+        // A retained file alone is also protected: never invent an article reference.
+        if uses.is_empty() && self.retained_media(path)? {
+            uses.push(library::Usage {
+                id: None,
+                title: "Arquivo preservado em publicações para rollback".into(),
+                kind: "publication".into(),
+                permalink: None,
+                contexts: std::collections::BTreeSet::from([
+                    "Retenção de publicações; sem artigo ou página identificado".into(),
+                ]),
+            });
+        }
+        Ok(library::merge_usages(uses))
+    }
     fn active(&self) -> Result<String> {
         let target = fs::canonicalize(self.root.join("current"))?;
         let releases = fs::canonicalize(self.root.join("releases"))?;
@@ -951,6 +989,28 @@ mod publishing_tests {
         fs::create_dir_all(&media).unwrap();
         fs::write(media.join("unused.png"), b"image").unwrap();
         assert!(p.retained_media("/uploads/unused.png").unwrap());
+        let uses = p.media_usages("/uploads/unused.png").unwrap();
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].kind, "publication");
+        assert!(uses[0].id.is_none());
+        fs::write(
+            p.root.join("snapshots/baseline/articles/wp-1/body.html"),
+            "<img src='/uploads/unused.png'>",
+        )
+        .unwrap();
+        let previous = p.root.join("snapshots/previous/pages/old-page");
+        fs::create_dir_all(&previous).unwrap();
+        write_json(&previous.join("metadata.json"), &serde_json::json!({"id":"old-page","kind":"page","title":"Página antiga","permalink":"/antiga/"})).unwrap();
+        fs::write(
+            previous.join("body.html"),
+            "<img src='/uploads/unused.png'>",
+        )
+        .unwrap();
+        let uses = p.media_usages("/uploads/unused.png").unwrap();
+        assert!(uses.iter().any(|u| u.id.as_deref() == Some("wp-1") && u.contexts.contains("Publicação atual")));
+        assert!(uses.iter().any(|u| u.title == "Página antiga"
+            && u.kind == "page"
+            && u.contexts.contains("Publicação anterior (rollback)")));
         assert!(p.retained_media("/../secret.png").is_err());
     }
     #[test]

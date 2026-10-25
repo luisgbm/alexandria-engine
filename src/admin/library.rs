@@ -241,54 +241,160 @@ pub(super) async fn update(
     ))
 }
 
-fn referenced(root: &Path, path: &str) -> Result<bool> {
-    fn visit(dir: &Path, path: &str) -> Result<bool> {
+#[derive(Clone, Serialize)]
+pub(super) struct Usage {
+    pub(super) id: Option<String>,
+    pub(super) title: String,
+    pub(super) kind: String,
+    pub(super) permalink: Option<String>,
+    pub(super) contexts: std::collections::BTreeSet<String>,
+}
+
+pub(super) fn merge_usages(items: Vec<Usage>) -> Vec<Usage> {
+    let mut merged = BTreeMap::new();
+    for item in items {
+        let key = (
+            item.kind.clone(),
+            item.id.clone(),
+            item.title.clone(),
+            item.permalink.clone(),
+        );
+        let entry = merged.entry(key).or_insert_with(|| Usage {
+            contexts: Default::default(),
+            ..item.clone()
+        });
+        entry.contexts.extend(item.contexts);
+    }
+    merged.into_values().collect()
+}
+
+fn usage_for_file(root: &Path, file: &Path) -> Result<Usage> {
+    let parts = file
+        .strip_prefix(root)?
+        .components()
+        .map(|p| p.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let settings = parts.last().is_some_and(|name| name == "site.json");
+    let generic = if settings {
+        Some("Configuração do site (banner ou barra lateral)")
+    } else if parts.first().is_some_and(|name| name == "attachments.json") {
+        Some("Catálogo de mídias importadas")
+    } else if parts
+        .first()
+        .is_some_and(|name| name == "url-baseline.json")
+    {
+        Some("Inventário de URLs preservadas")
+    } else {
+        None
+    };
+    if let Some(title) = generic {
+        return Ok(Usage {
+            id: None,
+            title: title.into(),
+            kind: "settings".into(),
+            permalink: None,
+            contexts: std::collections::BTreeSet::from(["Configuração preservada".into()]),
+        });
+    }
+    let id = parts.get(1).cloned().unwrap_or_default();
+    let mut metadata = serde_json::json!({});
+    for candidate in [
+        file.parent().unwrap().join("metadata.json"),
+        root.join("articles").join(&id).join("metadata.json"),
+        root.join("pages").join(&id).join("metadata.json"),
+    ] {
+        if candidate.exists() {
+            metadata = read_json(&candidate)?;
+            break;
+        }
+    }
+    let page =
+        parts.first().is_some_and(|part| part == "pages") || root.join("pages").join(&id).exists();
+    let kind = metadata
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if page { "page" } else { "post" })
+        .to_owned();
+    let title = metadata
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Conteúdo {id}"));
+    let context = if parts.first().is_some_and(|name| name == "editorial") {
+        let current =
+            fs::read_to_string(root.join("editorial").join(&id).join("draft")).unwrap_or_default();
+        if parts.get(2).is_some_and(|part| part == "versions")
+            && parts
+                .get(3)
+                .is_some_and(|revision| revision == current.trim())
+        {
+            "Rascunho salvo"
+        } else {
+            "Histórico editorial"
+        }
+    } else if file
+        .file_name()
+        .is_some_and(|name| name == "wordpress-source.html")
+    {
+        "Fonte WordPress preservada"
+    } else {
+        "Conteúdo de origem"
+    };
+    Ok(Usage {
+        id: Some(id),
+        title,
+        kind,
+        permalink: metadata
+            .get("permalink")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        contexts: std::collections::BTreeSet::from([context.into()]),
+    })
+}
+
+pub(super) fn references(root: &Path, path: &str) -> Result<Vec<Usage>> {
+    fn matches(file: &Path, path: &str) -> Result<bool> {
+        Ok(
+            percent_encoding::percent_decode_str(&fs::read_to_string(file)?.replace("\\/", "/"))
+                .decode_utf8_lossy()
+                .contains(path),
+        )
+    }
+    fn visit(root: &Path, dir: &Path, path: &str, uses: &mut Vec<Usage>) -> Result<()> {
         if !dir.exists() {
-            return Ok(false);
+            return Ok(());
         }
         for item in fs::read_dir(dir)? {
             let item = item?;
             let kind = item.file_type()?;
             ensure!(!kind.is_symlink(), "unexpected editorial symlink");
             if kind.is_dir() {
-                if visit(&item.path(), path)? {
-                    return Ok(true);
-                }
+                visit(root, &item.path(), path, uses)?;
             } else if kind.is_file() {
                 let file = item.path();
                 let name = item.file_name();
-                if file.extension().and_then(|s| s.to_str()) == Some("html")
+                if (file.extension().and_then(|s| s.to_str()) == Some("html")
                     || name == "metadata.json"
-                    || name == "site.json"
+                    || name == "site.json")
+                    && matches(&file, path)?
                 {
-                    let text = fs::read_to_string(file)?.replace("\\/", "/");
-                    if percent_encoding::percent_decode_str(&text)
-                        .decode_utf8_lossy()
-                        .contains(path)
-                    {
-                        return Ok(true);
-                    }
+                    uses.push(usage_for_file(root, &file)?);
                 }
             }
         }
-        Ok(false)
+        Ok(())
     }
+    let mut uses = Vec::new();
     for folder in ["articles", "pages", "editorial"] {
-        if visit(&root.join(folder), path)? {
-            return Ok(true);
-        }
+        visit(root, &root.join(folder), path, &mut uses)?;
     }
     for name in ["site.json", "attachments.json", "url-baseline.json"] {
         let file = root.join(name);
-        if file.exists()
-            && percent_encoding::percent_decode_str(&fs::read_to_string(file)?.replace("\\/", "/"))
-                .decode_utf8_lossy()
-                .contains(path)
-        {
-            return Ok(true);
+        if file.exists() && matches(&file, path)? {
+            uses.push(usage_for_file(root, &file)?);
         }
     }
-    Ok(false)
+    Ok(merge_usages(uses))
 }
 #[derive(Deserialize)]
 pub(super) struct Purge {
@@ -300,7 +406,7 @@ pub(super) async fn purge(
     State(app): State<Shared>,
     headers: HeaderMap,
     Json(input): Json<Purge>,
-) -> ApiResult<Json<serde_json::Value>> {
+) -> ApiResult<Response> {
     app.session(&headers, true)?;
     if input.confirmation != "EXCLUIR IMAGEM" {
         return Err(bad("Digite EXCLUIR IMAGEM para confirmar."));
@@ -330,13 +436,6 @@ pub(super) async fn purge(
             "Remova a imagem da biblioteca antes de excluí-la definitivamente.",
         ));
     }
-    // Imported sources remain immutable and are present in historical public releases.
-    if !input.path.starts_with("/uploads/") {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "Imagem protegida: fontes importadas do WordPress são preservadas.".into(),
-        ));
-    }
     let file = media_file(&store.root, &input.path).map_err(|_| bad("Imagem não encontrada."))?;
     let relative = relative_path(&input.path)?;
     let media = fs::canonicalize(store.root.join("media")).map_err(anyhow::Error::from)?;
@@ -344,15 +443,23 @@ pub(super) async fn purge(
         return Err(bad("Caminho de imagem inválido."));
     }
     let decoded = percent_encoding::percent_decode_str(&input.path).decode_utf8_lossy();
-    if referenced(&store.root, &decoded)?
-        || app
-            .publisher
-            .as_ref()
-            .map(|p| p.retained_media(&input.path))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        return Err(ApiError(StatusCode::CONFLICT,"Imagem em uso ou preservada em conteúdo, versões anteriores ou publicações. A exclusão definitiva foi bloqueada.".into()));
+    let mut uses = references(&store.root, &decoded)?;
+    if let Some(publisher) = &app.publisher {
+        uses.extend(publisher.media_usages(&input.path)?);
+    }
+    let uses = merge_usages(uses);
+    let imported = !input.path.starts_with("/uploads/");
+    if imported || !uses.is_empty() {
+        let message = if imported {
+            "Imagem protegida: fontes importadas do WordPress são preservadas. A exclusão definitiva foi bloqueada."
+        } else {
+            "Imagem em uso ou preservada em conteúdo, versões anteriores ou publicações. A exclusão definitiva foi bloqueada."
+        };
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error":message,"references":uses})),
+        )
+            .into_response());
     }
     fs::remove_file(&file).map_err(anyhow::Error::from)?;
     data.remove(&input.path);
@@ -362,9 +469,7 @@ pub(super) async fn purge(
     if let Err(error) = audit(&app.db.lock().unwrap(), "library_image_purged", &input.path) {
         eprintln!("image purge audit failed: {error:#}");
     }
-    Ok(Json(
-        serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending}),
-    ))
+    Ok(Json(serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending})).into_response())
 }
 
 #[cfg(test)]

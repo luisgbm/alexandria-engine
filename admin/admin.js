@@ -49,7 +49,8 @@
 
       if (response.status === 401) { loginView(); notice("Sua sessão expirou. Entre novamente; o texto continua nesta aba.", true); }
 
-      throw new Error(data.error || "Não foi possível concluir a operação.");
+      const error=new Error(data.error || "Não foi possível concluir a operação.");
+      error.references=Array.isArray(data.references) ? data.references : [];throw error;
 
     }
 
@@ -514,6 +515,7 @@
     }
     return data.html;
   }
+  let imageSection="active";
   let libraryRevision="", imageOffset=0, libraryImages=[], selectedImage=null, imageGeneration=0, searchTimer;
   function imageCode(){const width=Number($("image-width").value);if(!Number.isInteger(width)||width<1||width>2400)throw new Error("Escolha uma largura inteira entre 1 e 2400 px.");return `<figure style="text-align:center;"><img src="${escape($("image-path").value)}" alt="${escape($("image-alt").value)}" width="${width}" style="max-width:100%;height:auto;"><figcaption>${escape($("image-caption").value)}</figcaption></figure>`;}
   function refreshImageCode(){
@@ -525,7 +527,7 @@
   }
   async function loadLibrary(){
     const generation=++imageGeneration;$("image-grid").replaceChildren();$("image-count").textContent="Carregando imagens…";$("images-prev").disabled=$("images-next").disabled=true;
-    const query=new URLSearchParams({q:$("image-search").value,offset:String(imageOffset),deleted:String($("image-filter").value==="deleted")});
+    const query=new URLSearchParams({q:$("image-search").value,offset:String(imageOffset),deleted:String(imageSection==="deleted")});
     const data=await api(`/api/library?${query}`);if(generation!==imageGeneration)return;
     libraryRevision=data.revision;libraryImages=data.images;$("image-grid").replaceChildren();
     $("image-count").textContent=`${data.total} imagem(ns) · ${data.total ? imageOffset+1 : 0}–${Math.min(imageOffset+data.images.length,data.total)}`;
@@ -541,23 +543,37 @@
   $("copy-image-html").onclick=()=>busy($("copy-image-html"),()=>copyImage(imageCode()));
   $("image-form").onsubmit=event=>{event.preventDefault();busy($("save-image"),async()=>{await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Imagem salva na biblioteca.",loadLibrary);});};
   $("remove-image").onclick=()=>busy($("remove-image"),async()=>{if(!selectedImage.deleted && $("remove-image").dataset.confirmPath!==selectedImage.path){$("remove-image").dataset.confirmPath=selectedImage.path;$("remove-image").textContent="Confirmar exclusão da biblioteca";notice("Clique novamente para excluir da biblioteca. Os arquivos usados em artigos e versões anteriores serão preservados.");return;}await api("/api/library",{method:"PUT",body:JSON.stringify({path:selectedImage.path,revision:libraryRevision,alt:$("image-alt").value,caption:$("image-caption").value,deleted:!selectedImage.deleted})});$("image-dialog").close();await refreshAfterSuccess("Biblioteca atualizada.",loadLibrary);});
+  function showImageReferences(references){
+    const list=$("purge-image-references");list.replaceChildren();$("purge-image-usage").hidden=!references.length;
+    for(const reference of references){
+      const item=document.createElement("li"),title=document.createElement("strong"),detail=document.createElement("span");
+      const kind=reference.kind==="page" ? "📄 Página" : reference.kind==="post" ? "📝 Artigo" : "📌 Referência";
+      title.textContent=`${kind}: ${reference.title}`;
+      detail.textContent=[reference.permalink,(reference.contexts||[]).join(", ")].filter(Boolean).join(" · ");
+      item.append(title,detail);list.append(item);
+    }
+  }
   let purgeTarget=null;
-  $("purge-image").onclick=()=>{purgeTarget=selectedImage;$("image-dialog").close();$("purge-image-name").textContent=purgeTarget.name||purgeTarget.path;$("purge-image-confirmation").value="";$("confirm-purge-image").disabled=true;$("purge-image-status").textContent="";$("purge-image-dialog").showModal();};
+  $("purge-image").onclick=()=>{purgeTarget=selectedImage;$("image-dialog").close();$("purge-image-name").textContent=purgeTarget.name||purgeTarget.path;$("purge-image-confirmation").value="";$("confirm-purge-image").disabled=true;$("purge-image-status").textContent="";showImageReferences([]);$("purge-image-dialog").showModal();};
   $("cancel-purge-image").onclick=()=>$("purge-image-dialog").close();
   $("purge-image-confirmation").oninput=()=>{$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";};
   $("purge-image-form").onsubmit=async event=>{
     event.preventDefault();if(!purgeTarget||$("purge-image-confirmation").value!=="EXCLUIR IMAGEM"||$("confirm-purge-image").disabled)return;
     $("confirm-purge-image").disabled=true;$("cancel-purge-image").disabled=true;$("purge-image-status").textContent="Verificando referências e excluindo…";
     try {await api("/api/library/purge",{method:"POST",body:JSON.stringify({path:purgeTarget.path,revision:libraryRevision,confirmation:"EXCLUIR IMAGEM"})});$("purge-image-dialog").close();selectedImage=null;imageOffset=0;await refreshAfterSuccess("Imagem excluída definitivamente.",loadLibrary);}
-    catch(error){$("purge-image-status").textContent=error.message;}
+    catch(error){$("purge-image-status").textContent=error.message;showImageReferences(error.references||[]);}
     finally{$("cancel-purge-image").disabled=false;$("confirm-purge-image").disabled=$("purge-image-confirmation").value!=="EXCLUIR IMAGEM";}
   };
   $("insert-image").onclick=()=>{if(!doc||doc.trashed||$("html").readOnly)return;const code="\n"+imageCode()+"\n";const field=$("html");field.setRangeText(code,field.selectionStart,field.selectionEnd,"end");edit();$("image-dialog").close();showPage("/content/",true).catch(e=>notice(e.message,true));notice("Imagem inserida no HTML. Salve o rascunho para manter a alteração.");};
   $("image-search").oninput=()=>{clearTimeout(searchTimer);imageOffset=0;searchTimer=setTimeout(()=>loadLibrary().catch(e=>notice(e.message,true)),300);};
-  $("image-filter").onchange=()=>{imageOffset=0;loadLibrary().catch(e=>notice(e.message,true));};
+  function setImageSection(section){
+    imageSection=section;imageOffset=0;
+    for(const button of document.querySelectorAll("[data-image-section]"))button.setAttribute("aria-pressed",String(button.dataset.imageSection===section));
+  }
+  for(const button of document.querySelectorAll("[data-image-section]"))button.onclick=()=>{setImageSection(button.dataset.imageSection);loadLibrary().catch(e=>notice(e.message,true));};
   $("images-prev").onclick=()=>{imageOffset=Math.max(0,imageOffset-48);loadLibrary().catch(e=>notice(e.message,true));};
   $("images-next").onclick=()=>{imageOffset+=48;loadLibrary().catch(e=>notice(e.message,true));};
-  $("file").onchange=async()=>{const file=$("file").files[0];if(!file)return;$("file").disabled=true;$("image-search").disabled=true;$("image-filter").disabled=true;$("images-prev").disabled=$("images-next").disabled=true;clearTimeout(searchTimer);let uploaded=false;try{if(file.size>8*1024*1024)throw new Error("Escolha uma imagem de até 8 MB.");notice("Enviando e verificando imagem…");const form=new FormData();form.append("image",file);const result=await api("/api/uploads",{method:"POST",body:form});uploaded=true;clearTimeout(searchTimer);imageOffset=0;$("image-filter").value="active";$("image-search").value="";const refreshed=await loadLibrary();const image=refreshed?.images.find(i=>i.path===result.path);if(image)selectImage(image);notice("Imagem enviada à biblioteca. Edite a descrição e a legenda.");}catch(error){if(!uploaded)await loadLibrary().catch(()=>{});notice(uploaded ? "Imagem enviada, mas a biblioteca não pôde ser atualizada. Reabra a página de imagens para conferir." : error.message,true);}finally{$("file").value="";$("file").disabled=false;$("image-search").disabled=false;$("image-filter").disabled=false;}};
+  $("file").onchange=async()=>{const file=$("file").files[0];if(!file)return;$("file").disabled=true;$("image-search").disabled=true;for(const button of document.querySelectorAll("[data-image-section]"))button.disabled=true;$("images-prev").disabled=$("images-next").disabled=true;clearTimeout(searchTimer);let uploaded=false;try{if(file.size>8*1024*1024)throw new Error("Escolha uma imagem de até 8 MB.");notice("Enviando e verificando imagem…");const form=new FormData();form.append("image",file);const result=await api("/api/uploads",{method:"POST",body:form});uploaded=true;clearTimeout(searchTimer);imageOffset=0;setImageSection("active");$("image-search").value="";const refreshed=await loadLibrary();const image=refreshed?.images.find(i=>i.path===result.path);if(image)selectImage(image);notice("Imagem enviada à biblioteca. Edite a descrição e a legenda.");}catch(error){if(!uploaded)await loadLibrary().catch(()=>{});notice(uploaded ? "Imagem enviada, mas a biblioteca não pôde ser atualizada. Reabra a página de imagens para conferir." : error.message,true);}finally{$("file").value="";$("file").disabled=false;$("image-search").disabled=false;for(const button of document.querySelectorAll("[data-image-section]"))button.disabled=false;}};
 
   function schedulePreview() {clearTimeout(previewTimer);previewTimer=setTimeout(renderPreview,650);}
 

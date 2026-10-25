@@ -2008,6 +2008,12 @@ async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media(
         "<img src='/uploads/draft.png'>",
     )
     .unwrap();
+    write_json(&draft.join("metadata.json"), &serde_json::json!({"id":"test","kind":"page","title":"Página de histórico","permalink":"/historico/"})).unwrap();
+    fs::write(
+        root.join("articles/wp-1/wordpress-source.html"),
+        "<img src='/wp-content/uploads/imported.png'>",
+    )
+    .unwrap();
     let list = call(
         &app,
         "GET",
@@ -2070,7 +2076,34 @@ async fn image_purge_requires_trash_confirmation_and_preserves_referenced_media(
         assert_eq!(status, StatusCode::OK);
         revision = updated["revision"].clone();
         if path != "/uploads/free.png" {
-            assert_eq!(call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await.0,StatusCode::CONFLICT);
+            let (blocked_status, _, blocked) = call(&app,"POST","/api/library/purge",Some(&cookie),Some(&csrf),serde_json::json!({"path":path,"revision":revision,"confirmation":"EXCLUIR IMAGEM"})).await;
+            assert_eq!(blocked_status, StatusCode::CONFLICT);
+            let uses = blocked["references"].as_array().unwrap();
+            assert!(!uses.is_empty());
+            if path == "/uploads/draft.png" || path == "/wp-content/uploads/imported.png" {
+                assert!(uses.iter().any(|u| u["title"] == "Original"
+                    && u["kind"] == "post"
+                    && u["permalink"] == "/artigos/original/"));
+            }
+            if path == "/uploads/history.png" {
+                assert!(uses.iter().any(|u| {
+                    u["title"] == "Página de histórico"
+                        && u["kind"] == "page"
+                        && u["contexts"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|c| c == "Histórico editorial")
+                }));
+            }
+            if path == "/uploads/sidebar.png" {
+                assert!(uses.iter().any(|u| u["kind"] == "settings"));
+            }
+            assert!(
+                !blocked
+                    .to_string()
+                    .contains(temp.path().to_string_lossy().as_ref())
+            );
             assert!(
                 root.join("media")
                     .join(path.trim_start_matches('/'))
