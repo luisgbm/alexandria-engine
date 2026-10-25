@@ -43,6 +43,7 @@ class DeploymentTests(unittest.TestCase):
             {'root': '/srv/x/ok\nExecStart=/bin/sh'},
             {'admin_origin': 'https://example.org\nInjected'},
             {'admin_origin': 'http://public.example.org'},
+            {'canonical_url': 'http://localhost:19880'},
             {'public_bind': '0.0.0.0:443?;evil'},
             {'backend_bind': '0.0.0.0:3001'},
             {'instance': '../other'}, {'backup_extra_paths': ['/srv']},

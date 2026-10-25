@@ -69,7 +69,7 @@ def load(path):
     require(len(root.parts) >= 4, 'instance root must be a dedicated nested directory')
     require(c.get('environment') in ['staging', 'production'], 'invalid environment')
     public, admin = origin(c['public_url']), origin(c['admin_origin'], admin=True)
-    origin(c['canonical_url'])
+    require(origin(c['canonical_url']).scheme == 'https', 'canonical_url requires HTTPS to match the content schema')
     if 'site_title' in c:
         title = c['site_title']
         require(isinstance(title, str) and 1 <= len(title.strip()) <= 160
