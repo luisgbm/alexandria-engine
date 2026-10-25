@@ -42,6 +42,28 @@ def resume_services():
         marker.unlink()
 
 
+def copy_publisher(source, target):
+    """Link immutable release bytes; independently copy mutable publisher state.
+
+    Called only with writers stopped and publish.lock held. Never checkpoint,
+    chmod or modify linked files: releases/snapshots are immutable after commit.
+    """
+    target.mkdir(parents=True, mode=0o700)
+    for child in source.iterdir():
+        destination = target / child.name
+        immutable = child.name in {'releases', 'snapshots'}
+        if immutable:
+            if child.is_symlink() or not child.is_dir():
+                raise RuntimeError('Unexpected immutable publisher directory')
+            for item in child.rglob('*'):
+                if item.is_symlink() or item.suffix in {'.sqlite', '.sqlite-wal', '.sqlite-shm'}:
+                    raise RuntimeError('Unsafe file in immutable publisher history')
+            if child.stat().st_dev != target.stat().st_dev:
+                raise RuntimeError('Immutable history capture requires the same filesystem')
+        run('cp', '-al' if immutable else '-a', '--', str(child), str(destination))
+    shutil.copystat(source, target)
+
+
 def capture_snapshot():
     if os.geteuid() != 0:
         raise SystemExit('Root required')
@@ -72,7 +94,10 @@ def capture_snapshot():
                         paths.append(p)
             for source in paths:
                 if Path(source).exists():
-                    run('cp', '-a', '--parents', source, str(SNAPSHOT))
+                    if source == '/srv/alexandria/staging':
+                        copy_publisher(Path(source), SNAPSHOT / source.lstrip('/'))
+                    else:
+                        run('cp', '-a', '--parents', source, str(SNAPSHOT))
             # Record fresh host reconstruction requirements; no shadow/SSH keys.
             info = {
                 'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
