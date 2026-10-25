@@ -10,6 +10,8 @@ import io
 import tarfile
 import hashlib
 import subprocess
+import socket
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,6 +54,21 @@ class DeploymentTests(unittest.TestCase):
         ]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.load(changes)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux installer socket behavior')
+    def test_port_probe_refuses_listener_but_allows_closed_http_connections(self):
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(('127.0.0.1', 0))
+            listener.listen(1)
+            bind = '127.0.0.1:' + str(listener.getsockname()[1])
+            with self.assertRaises(OSError):
+                deploy.probe_bind(bind)
+            with socket.create_connection(listener.getsockname()) as client:
+                peer, _ = listener.accept()
+                peer.close()  # Active close leaves the server port in TIME_WAIT.
+                self.assertEqual(client.recv(1), b'')
+        deploy.probe_bind(bind)
 
     def test_instance_isolation_and_environment(self):
         config = self.load({'instance': 'elsewhere', 'root': '/opt/instances/elsewhere'})

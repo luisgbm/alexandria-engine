@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise restored editor APIs using a disposable session on the private clone."""
+"""Exercise editor APIs using a disposable session on an isolated test instance."""
 import argparse
 import hashlib
 import json
@@ -13,14 +13,23 @@ import zlib
 from urllib.parse import urlsplit
 
 
+def validate_origins(config, disposable_https_origin=None):
+    origins = [urlsplit(config[key]) for key in ['public_url', 'admin_origin']]
+    if all(origin.hostname == 'localhost' for origin in origins):
+        return
+    assert disposable_https_origin == config['admin_origin'], 'Explicit disposable HTTPS admin origin required'
+    assert all(origin.scheme == 'https' and origin.hostname for origin in origins), 'Both disposable origins require HTTPS'
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Destructive editor check ONLY on a disposable portable localhost instance with no passkeys.')
+    parser = argparse.ArgumentParser(description='Destructive editor check ONLY on an explicitly identified disposable instance with no passkeys.')
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--disposable-instance', required=True)
+    parser.add_argument('--disposable-https-origin', help='Explicitly authorize testing this HTTPS admin origin on a disposable zero-passkey instance')
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     assert config['instance'] == args.disposable_instance and config['environment'] == 'staging'
-    assert all(urlsplit(config[k]).hostname == 'localhost' for k in ['public_url', 'admin_origin'])
+    validate_origins(config, args.disposable_https_origin)
     root = Path(config['root'])
     assert args.config.resolve() == root / 'etc/deployment.json'
     assert (root / 'etc/install-report.json').is_file()

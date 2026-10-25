@@ -416,6 +416,17 @@ def install(c, args):
                       'private_enrollment_directory': str(root / 'etc/enrollment')}))
 
 
+def probe_bind(bind):
+    address = endpoint(bind)
+    family = socket.AF_INET6 if ':' in address.hostname else socket.AF_INET
+    with socket.socket(family) as probe:
+        # Match Nginx restart behavior: closed ACME HTTP connections can remain
+        # in TIME_WAIT, while an actual listening service must still be refused.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((address.hostname, address.port))
+        probe.listen(1)
+
+
 def activate(c):
     require(os.geteuid() == 0, 'root required')
     root, ns = Path(c['root']), names(c)
@@ -423,10 +434,7 @@ def activate(c):
     require(load(installed_config(c)) == c, 'configuration differs from installed instance; review migration explicitly')
     execute('nginx', '-t', '-c', root / 'etc/nginx.conf')
     for bind in set([c['public_bind'], c['admin_bind'], c['backend_bind']] + ([c['http_bind']] if c.get('http_bind') else [])):
-        address = endpoint(bind)
-        family = socket.AF_INET6 if ':' in address.hostname else socket.AF_INET
-        with socket.socket(family) as probe:
-            probe.bind((address.hostname, address.port))
+        probe_bind(bind)
     units = []
     for component in ns:
         for suffix in ['service', 'timer']:
