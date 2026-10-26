@@ -307,6 +307,10 @@
 
   }
 
+  function storageSize(bytes) {
+    const value=Number(bytes)||0;
+    return value>=1024**3?`${(value/1024**3).toLocaleString("pt-BR",{maximumFractionDigits:2})} GiB`:`${(value/1024**2).toLocaleString("pt-BR",{maximumFractionDigits:1})} MiB`;
+  }
   async function loadDeployments() {
 
     deployment=await api("/api/deployments");$("deployments").hidden=!deployment.enabled;$("publish").hidden=!deployment.enabled;
@@ -315,9 +319,12 @@
 
     $("active-release").textContent=`Versão ativa: ${deployment.active}`;$("view-staging").href=deployment.public_url+"/";$("release-list").replaceChildren();
 
-    for(const release of deployment.releases){
+    const storage=deployment.storage;
+    $("publication-storage").textContent=storage?`${storage.retained_count} versões locais · Site: ${storageSize(storage.release_bytes)} · Conteúdo: ${storageSize(storage.snapshot_bytes)} · Total: ${storageSize(storage.total_bytes)}`:"";
+    $("retention-policy").textContent=storage?`Retenção: versão ativa + ${storage.keep_previous} versões anteriores, após backup verificado no PC. Novas versões aguardam o próximo backup.${storage.archived_count?` ${storage.archived_count} registros antigos sem rollback local.`:""}${storage.retention?.checked_at?` Última limpeza: ${new Date(storage.retention.checked_at).toLocaleString("pt-BR")}.`:""}`:"";
+    for(const release of deployment.releases.filter(release=>release.retained!==false)){
 
-      const li=document.createElement("li");li.textContent=`${new Date(release.created_at*1000).toLocaleString("pt-BR")} · ${release.id} `;
+      const li=document.createElement("li");li.textContent=`${new Date(release.created_at*1000).toLocaleString("pt-BR")} · ${release.id}${release.release_bytes!==undefined?` · ${storageSize((release.release_bytes||0)+(release.snapshot_bytes||0))}`:""} `;
 
       if(release.id===deployment.active){li.append(document.createTextNode(" · Ativa"));}
 

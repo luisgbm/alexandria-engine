@@ -5,10 +5,11 @@ import sys
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location(
-    'backup', Path(__file__).resolve().parents[1] / 'ops/backup-staging.py')
-backup = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(backup)
+if sys.platform == 'linux':
+    spec = importlib.util.spec_from_file_location(
+        'backup', Path(__file__).resolve().parents[1] / 'ops/backup-staging.py')
+    backup = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backup)
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'Linux backup cp/hardlink semantics')

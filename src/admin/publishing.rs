@@ -1,6 +1,9 @@
 //! Staging-only release orchestration. The active symlink is the source of truth.
 use super::*;
-use std::os::{fd::AsRawFd, unix::fs::symlink};
+use std::os::{
+    fd::AsRawFd,
+    unix::fs::{MetadataExt, symlink},
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Publisher {
@@ -154,7 +157,37 @@ fn normalize_article_images(entry: &mut Entry, base: &str, original_root: Option
     entry.body = html::apply_article_image_defaults(&entry.body, base, original.as_deref());
     entry.body != before || featured.is_some()
 }
+fn directory_bytes(path: &Path) -> Result<u64> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Ok(0);
+    }
+    let mut bytes = metadata.blocks() * 512;
+    if metadata.is_dir() {
+        for child in fs::read_dir(path)? {
+            bytes += directory_bytes(&child?.path())?;
+        }
+    }
+    Ok(bytes)
+}
+
 impl Publisher {
+    fn release_storage(&self, release: &Release) -> Result<serde_json::Value> {
+        validate_id(&release.id)?;
+        let site = self.root.join("releases").join(&release.id);
+        let source = self.root.join("snapshots").join(&release.id);
+        let retained =
+            site.is_dir() && source.is_dir() && !site.is_symlink() && !source.is_symlink();
+        let mut row = serde_json::to_value(release)?;
+        row["retained"] = serde_json::json!(retained);
+        row["release_bytes"] = serde_json::json!(directory_bytes(&site)?);
+        row["snapshot_bytes"] = serde_json::json!(directory_bytes(&source)?);
+        Ok(row)
+    }
     pub(super) fn category_published(&self, slug: &str) -> Result<bool> {
         for item in fs::read_dir(self.root.join("history"))? {
             let path = item?.path();
@@ -861,6 +894,25 @@ pub(super) async fn history(
             .cmp(&a.created_at)
             .then_with(|| b.id.cmp(&a.id))
     });
+    let rows = releases
+        .iter()
+        .map(|release| p.release_storage(release))
+        .collect::<Result<Vec<_>>>()?;
+    let retained_count = rows.iter().filter(|row| row["retained"] == true).count();
+    let release_bytes: u64 = rows
+        .iter()
+        .map(|row| row["release_bytes"].as_u64().unwrap_or(0))
+        .sum();
+    let snapshot_bytes: u64 = rows
+        .iter()
+        .map(|row| row["snapshot_bytes"].as_u64().unwrap_or(0))
+        .sum();
+    let retention: Option<serde_json::Value> = if p.root.join("retention.json").is_file() {
+        Some(read_json(&p.root.join("retention.json"))?)
+    } else {
+        None
+    };
+    let storage = serde_json::json!({"retained_count":retained_count,"archived_count":rows.len()-retained_count,"release_bytes":release_bytes,"snapshot_bytes":snapshot_bytes,"total_bytes":release_bytes+snapshot_bytes,"keep_previous":5,"retention":retention});
     let mut events = Vec::new();
     for file in fs::read_dir(p.root.join("events")).map_err(anyhow::Error::from)? {
         let path = file.map_err(anyhow::Error::from)?.path();
@@ -873,7 +925,7 @@ pub(super) async fn history(
     let mut store = app.store.lock().unwrap();
     p.sync_store(&mut store)?;
     Ok(Json(
-        serde_json::json!({"enabled":true,"active":p.active()?,"public_url":p.public_url,"releases":releases,"events":events}),
+        serde_json::json!({"enabled":true,"active":p.active()?,"public_url":p.public_url,"releases":rows,"events":events,"storage":storage}),
     ))
 }
 pub(super) async fn publish(
@@ -1009,6 +1061,18 @@ mod publishing_tests {
             "<p>Current cleaned public content</p>"
         );
         assert!(!store.entries["wp-1"].has_saved_draft);
+    }
+    #[test]
+    fn publication_storage_reports_local_pairs_and_preserves_archived_metadata() {
+        let (_temp, p, _content, _doc) = setup();
+        let release = p.release("baseline").unwrap();
+        let usage = p.release_storage(&release).unwrap();
+        assert_eq!(usage["retained"], true);
+        assert!(usage["release_bytes"].as_u64().unwrap() > 0);
+        assert!(usage["snapshot_bytes"].as_u64().unwrap() > 0);
+        fs::remove_dir_all(p.root.join("snapshots/baseline")).unwrap();
+        assert_eq!(p.release_storage(&release).unwrap()["retained"], false);
+        assert!(p.root.join("history/baseline.json").is_file());
     }
     #[test]
     fn retained_release_media_is_protected_even_without_an_article_reference() {
