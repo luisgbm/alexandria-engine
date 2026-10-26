@@ -40,6 +40,17 @@ pub fn compact_publisher_media(
 ) -> anyhow::Result<serde_json::Value> {
     publishing::compact_media(state, content)
 }
+pub fn compact_publisher_history(state: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    publishing::compact_history(state)
+}
+pub fn prune_publisher_history(
+    root: &std::path::Path,
+    expected: &str,
+    keep_previous: usize,
+    apply: bool,
+) -> anyhow::Result<serde_json::Value> {
+    publishing::prune_compact_history(root, expected, keep_previous, apply)
+}
 #[path = "admin/permalinks.rs"]
 mod permalinks;
 #[path = "admin/publishing.rs"]

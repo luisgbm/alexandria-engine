@@ -9,6 +9,8 @@ use std::os::{
 pub(super) struct Publisher {
     root: PathBuf,
     public_url: String,
+    #[serde(default)]
+    compact_history: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Release {
@@ -133,29 +135,7 @@ fn shared_media_tree(source: &Path, target: &Path, pool: &Path) -> Result<()> {
     Ok(())
 }
 fn tree_hash(root: &Path) -> Result<String> {
-    fn visit(root: &Path, dir: &Path, rows: &mut BTreeMap<String, String>) -> Result<()> {
-        for item in fs::read_dir(dir)? {
-            let item = item?;
-            let kind = item.file_type()?;
-            ensure!(!kind.is_symlink(), "release contains a symlink");
-            if kind.is_dir() {
-                visit(root, &item.path(), rows)?;
-            } else {
-                ensure!(kind.is_file(), "non-file in release");
-                rows.insert(
-                    item.path()
-                        .strip_prefix(root)?
-                        .to_string_lossy()
-                        .into_owned(),
-                    crate::storage::file_hash(&item.path())?,
-                );
-            }
-        }
-        Ok(())
-    }
-    let mut rows = BTreeMap::new();
-    visit(root, root, &mut rows)?;
-    Ok(digest(&serde_json::to_string(&rows)?))
+    crate::storage::tree_hash(root)
 }
 
 fn normalize_article_images(entry: &mut Entry, base: &str, original_root: Option<&Path>) -> bool {
@@ -241,6 +221,119 @@ fn unique_storage_bytes(paths: &[PathBuf]) -> Result<u64> {
         bytes += visit(path, &mut seen)?;
     }
     Ok(bytes)
+}
+
+fn history_storage_roots(root: &Path) -> Vec<PathBuf> {
+    [
+        "releases",
+        "snapshots",
+        ".media-blobs",
+        ".history.sqlite",
+        ".history.sqlite-wal",
+        ".history.sqlite-shm",
+    ]
+    .iter()
+    .map(|name| root.join(name))
+    .collect()
+}
+
+pub(super) fn compact_history(state: &Path) -> Result<serde_json::Value> {
+    let mut publisher = Publisher::open(state)?.context("publisher not configured")?;
+    let _lock = publisher.lock()?;
+    let active = publisher.active()?;
+    let before = unique_storage_bytes(&history_storage_roots(&publisher.root))?;
+    publisher.compact_history = true;
+    publisher.compact_inactive()?;
+    durable_json(&state.join("publishing.json"), &publisher)?;
+    let after = unique_storage_bytes(&history_storage_roots(&publisher.root))?;
+    Ok(
+        serde_json::json!({"active":active,"compact_history":true,"before_bytes":before,"after_bytes":after,"reclaimed_bytes":before.saturating_sub(after)}),
+    )
+}
+
+pub(super) fn prune_compact_history(
+    root: &Path,
+    expected: &str,
+    keep_previous: usize,
+    apply: bool,
+) -> Result<serde_json::Value> {
+    ensure!(
+        (1..=50).contains(&keep_previous),
+        "invalid retained version count"
+    );
+    ensure!(
+        root.canonicalize()? == root && !root.is_symlink(),
+        "unsafe publisher root"
+    );
+    let p = Publisher {
+        root: root.to_owned(),
+        public_url: String::new(),
+        compact_history: true,
+    };
+    let _lock = p.lock()?;
+    ensure!(p.active()? == expected, "active release changed");
+    let coverage = p
+        .backup_coverage()?
+        .context("verified PC coverage missing")?;
+    let mut records = Vec::new();
+    for path in fs::read_dir(root.join("history"))? {
+        let path = path?.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            let record: Release = read_json(&path)?;
+            validate_id(&record.id)?;
+            if p.release_storage(&record)?["retained"] == true {
+                records.push(record);
+            }
+        }
+    }
+    records.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    let keep = std::collections::BTreeSet::from_iter(
+        std::iter::once(expected.to_owned()).chain(
+            records
+                .iter()
+                .filter(|r| r.id != expected)
+                .take(keep_previous)
+                .map(|r| r.id.clone()),
+        ),
+    );
+    let mut candidates = Vec::new();
+    let mut deferred = Vec::new();
+    for record in records.iter().filter(|r| !keep.contains(&r.id)) {
+        if coverage.releases.contains_key(&record.id) {
+            candidates.push(record.id.clone());
+        } else {
+            deferred.push(
+                serde_json::json!({"id":record.id,"reason":"Not covered by verified PC backup"}),
+            );
+        }
+    }
+    let before = unique_storage_bytes(&history_storage_roots(root))?;
+    if apply {
+        for id in &candidates {
+            p.verify_delete_target(id, &coverage.releases[id])
+                .map_err(|error| anyhow::anyhow!("{}", error.1))?;
+        }
+        for id in &candidates {
+            p.delete_backed_up_locked(
+                id,
+                expected,
+                &coverage.releases[id],
+                &coverage.snapshot_id,
+                "verified-backup-retention",
+            )
+            .map_err(|error| anyhow::anyhow!("{}", error.1))?;
+        }
+    }
+    let after = unique_storage_bytes(&history_storage_roots(root))?;
+    let report = serde_json::json!({"applied":apply,"active":expected,"keep_previous":keep_previous,"retained_ids":keep,"removed":if apply{candidates.clone()}else{Vec::new()},"candidates":candidates,"deferred":deferred,"reclaimed_bytes":before.saturating_sub(after),"backup_snapshot":coverage.snapshot_id});
+    if apply {
+        durable_json(&root.join("retention.json"), &report)?;
+    }
+    Ok(report)
 }
 
 /// Filesystem-user maintenance: no auth state or editable source is modified.
@@ -354,6 +447,73 @@ pub(super) fn compact_media(state: &Path, content: Option<&Path>) -> Result<serd
 }
 
 impl Publisher {
+    fn archived(&self, id: &str) -> Result<Option<crate::history::Version>> {
+        if !crate::history::History::exists(&self.root) {
+            return Ok(None);
+        }
+        crate::history::History::reader(&self.root)?.version(id)
+    }
+    fn compact_inactive(&self) -> Result<()> {
+        if !self.compact_history {
+            return Ok(());
+        }
+        let active = self.active()?;
+        let mut archive = crate::history::History::open(&self.root)?;
+        for entry in fs::read_dir(self.root.join("history"))? {
+            let path = entry?.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let record: Release = read_json(&path)?;
+            validate_id(&record.id)?;
+            let release = self.root.join("releases").join(&record.id);
+            let snapshot = self.root.join("snapshots").join(&record.id);
+            if release.is_dir() && snapshot.is_dir() {
+                ensure!(
+                    fs::canonicalize(&release)? == release
+                        && fs::canonicalize(&snapshot)? == snapshot,
+                    "unsafe history paths"
+                );
+                archive.record(&record.id, &release, &snapshot, &record.tree_hash)?;
+                if record.id != active {
+                    // A committed, verified root exists before either tree is
+                    // removed. Recovery can reconstruct either half after a crash.
+                    ensure!(self.active()? == active, "active release changed");
+                    fs::remove_dir_all(release)?;
+                    fs::remove_dir_all(snapshot)?;
+                }
+            } else if let Some(version) = archive.version(&record.id)?
+                && record.id != active
+                && (release.exists() || snapshot.exists())
+            {
+                archive.verify(&version)?;
+                for path in [release, snapshot] {
+                    if path.exists() {
+                        ensure!(!path.is_symlink(), "unsafe history cleanup");
+                        fs::remove_dir_all(path)?;
+                    }
+                }
+            }
+        }
+        archive.collect()?;
+        crate::storage::gc(&self.root.join(".media-blobs"))?;
+        Ok(())
+    }
+    fn compact_after_switch(&self) {
+        if let Err(error) = self.compact_inactive() {
+            eprintln!("history compaction pending: {error:#}");
+            let _ = self.event(&Event {
+                id: Uuid::new_v4().simple().to_string(),
+                time: now(),
+                actor: "publisher-maintenance".into(),
+                action: "compact".into(),
+                target: self.active().unwrap_or_default(),
+                previous: String::new(),
+                result: "pending".into(),
+                detail: format!("{error:#}"),
+            });
+        }
+    }
     pub(super) fn share_upload(&self, content: &Path, path: &Path) -> Result<()> {
         crate::storage::share_working_media(content, path, &self.root.join(".media-blobs"))?;
         Ok(())
@@ -401,6 +561,17 @@ impl Publisher {
                 "Aguarde a operação atual terminar e tente novamente.".into(),
             )
         })?;
+        self.delete_backed_up_locked(target, expected, proof, backup, "owner-passkey-session")
+    }
+    fn delete_backed_up_locked(
+        &self,
+        target: &str,
+        expected: &str,
+        proof: &BackedUpRelease,
+        backup: &str,
+        actor: &str,
+    ) -> ApiResult<serde_json::Value> {
+        validate_id(target).map_err(|_| bad("Publicação inválida."))?;
         let active = self.active()?;
         if active != expected {
             return Err(ApiError(
@@ -411,10 +582,76 @@ impl Publisher {
         if target == active {
             return Err(bad("A publicação ativa não pode ser excluída."));
         }
+        let archived = self.verify_delete_target(target, proof)?;
+        let release = self.root.join("releases").join(target);
+        let snapshot = self.root.join("snapshots").join(target);
+        let pending = self
+            .root
+            .join(format!(".delete-publication-{}", Uuid::new_v4().simple()));
+        fs::create_dir(&pending).map_err(anyhow::Error::from)?;
+        fs::set_permissions(&pending, fs::Permissions::from_mode(0o700))
+            .map_err(anyhow::Error::from)?;
+        let mut moved = Vec::new();
+        for (source, name) in [(&release, "release"), (&snapshot, "snapshot")] {
+            if !source.exists() {
+                continue;
+            }
+            if let Err(error) = fs::rename(source, pending.join(name)) {
+                for (source, name) in moved.iter().rev() {
+                    let _ = fs::rename(pending.join(name), source);
+                }
+                let _ = fs::remove_dir(&pending);
+                return Err(anyhow::Error::from(error).into());
+            }
+            moved.push((source, name));
+        }
+        if archived.is_some()
+            && let Err(error) = crate::history::History::open(&self.root)?.remove_version(target)
+        {
+            for (source, name) in moved.iter().rev() {
+                let _ = fs::rename(pending.join(name), source);
+            }
+            let _ = fs::remove_dir(&pending);
+            return Err(error.into());
+        }
+        let mut cleanup_pending = fs::remove_dir_all(&pending).is_err();
+        if archived.is_some()
+            && crate::history::History::open(&self.root)?
+                .collect()
+                .is_err()
+        {
+            cleanup_pending = true;
+        }
+        cleanup_pending |= crate::storage::gc(&self.root.join(".media-blobs")).is_err();
+        let audit_pending = self
+            .event(&Event {
+                id: Uuid::new_v4().simple().to_string(),
+                time: now(),
+                actor: actor.into(),
+                action: "delete".into(),
+                target: target.into(),
+                previous: active,
+                result: "deleted".into(),
+                detail: format!("verified_backup={backup}; cleanup_pending={cleanup_pending}"),
+            })
+            .is_err();
+        Ok(
+            serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending,"audit_pending":audit_pending}),
+        )
+    }
+    fn verify_delete_target(
+        &self,
+        target: &str,
+        proof: &BackedUpRelease,
+    ) -> ApiResult<Option<crate::history::Version>> {
         self.release(target)?;
         let release = self.root.join("releases").join(target);
         let snapshot = self.root.join("snapshots").join(target);
+        let archived = self.archived(target)?;
         for path in [&release, &snapshot] {
+            if !path.exists() && archived.is_some() {
+                continue;
+            }
             if !path.is_dir() || path.is_symlink() {
                 return Err(bad("Esta versão não está disponível para exclusão local."));
             }
@@ -427,54 +664,60 @@ impl Publisher {
             "{:x}",
             Sha256::digest(fs::read(record).map_err(anyhow::Error::from)?)
         );
+        if let Some(v) = &archived {
+            crate::history::History::reader(&self.root)?.verify(v)?;
+        }
         if record_hash != proof.record_hash
-            || tree_hash(&release)? != proof.release_hash
-            || tree_hash(&snapshot)? != proof.snapshot_hash
+            || (if release.exists() {
+                tree_hash(&release)?
+            } else {
+                archived
+                    .as_ref()
+                    .context("missing release")?
+                    .release_hash
+                    .clone()
+            }) != proof.release_hash
+            || (if snapshot.exists() {
+                tree_hash(&snapshot)?
+            } else {
+                archived
+                    .as_ref()
+                    .context("missing snapshot")?
+                    .snapshot_hash
+                    .clone()
+            }) != proof.snapshot_hash
         {
             return Err(ApiError(StatusCode::CONFLICT,"Esta versão não corresponde ao backup verificado. Faça e verifique um novo backup no PC.".into()));
         }
-        let pending = self
-            .root
-            .join(format!(".delete-publication-{}", Uuid::new_v4().simple()));
-        fs::create_dir(&pending).map_err(anyhow::Error::from)?;
-        fs::set_permissions(&pending, fs::Permissions::from_mode(0o700))
-            .map_err(anyhow::Error::from)?;
-        fs::rename(&release, pending.join("release")).map_err(anyhow::Error::from)?;
-        if let Err(error) = fs::rename(&snapshot, pending.join("snapshot")) {
-            if let Err(rollback_error) = fs::rename(pending.join("release"), &release) {
-                eprintln!("publication delete staging rollback failed: {rollback_error}");
-            }
-            let _ = fs::remove_dir(&pending);
-            return Err(anyhow::Error::from(error).into());
-        }
-        let cleanup_pending = fs::remove_dir_all(&pending).is_err()
-            || crate::storage::gc(&self.root.join(".media-blobs")).is_err();
-        let audit_pending = self
-            .event(&Event {
-                id: Uuid::new_v4().simple().to_string(),
-                time: now(),
-                actor: "owner-passkey-session".into(),
-                action: "delete".into(),
-                target: target.into(),
-                previous: active,
-                result: "deleted".into(),
-                detail: format!("verified_backup={backup}; cleanup_pending={cleanup_pending}"),
-            })
-            .is_err();
-        Ok(
-            serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending,"audit_pending":audit_pending}),
-        )
+        Ok(archived)
     }
     fn release_storage(&self, release: &Release) -> Result<serde_json::Value> {
         validate_id(&release.id)?;
         let site = self.root.join("releases").join(&release.id);
         let source = self.root.join("snapshots").join(&release.id);
-        let retained =
+        let materialized =
             site.is_dir() && source.is_dir() && !site.is_symlink() && !source.is_symlink();
+        let archived = if materialized {
+            None
+        } else {
+            self.archived(&release.id)?
+        };
+        let retained = materialized || archived.is_some();
         let mut row = serde_json::to_value(release)?;
         row["retained"] = serde_json::json!(retained);
-        row["release_bytes"] = serde_json::json!(directory_bytes(&site)?);
-        row["snapshot_bytes"] = serde_json::json!(directory_bytes(&source)?);
+        row["compact"] = serde_json::json!(!materialized && archived.is_some());
+        row["release_bytes"] = serde_json::json!(
+            archived
+                .as_ref()
+                .map(|v| v.release_bytes)
+                .unwrap_or(directory_bytes(&site)?)
+        );
+        row["snapshot_bytes"] = serde_json::json!(
+            archived
+                .as_ref()
+                .map(|v| v.snapshot_bytes)
+                .unwrap_or(directory_bytes(&source)?)
+        );
         Ok(row)
     }
     pub(super) fn category_published(&self, slug: &str) -> Result<bool> {
@@ -487,11 +730,19 @@ impl Publisher {
             let public = self
                 .root
                 .join("releases")
-                .join(release.id)
+                .join(&release.id)
                 .join("public/category")
                 .join(slug)
                 .join("index.html");
             if public.is_file() {
+                return Ok(true);
+            }
+            if let Some(v) = self.archived(&release.id)?
+                && crate::history::History::reader(&self.root)?.has_path(
+                    &v.release_root,
+                    &format!("public/category/{slug}/index.html"),
+                )?
+            {
                 return Ok(true);
             }
         }
@@ -529,6 +780,17 @@ impl Publisher {
         for (folder, prefix) in [("snapshots", "media"), ("releases", "public")] {
             for entry in fs::read_dir(self.root.join(folder))? {
                 if entry?.path().join(prefix).join(&relative).exists() {
+                    return Ok(true);
+                }
+            }
+        }
+        if crate::history::History::exists(&self.root) {
+            let h = crate::history::History::reader(&self.root)?;
+            let relative = relative.to_string_lossy();
+            for v in h.versions()? {
+                if h.has_path(&v.snapshot_root, &format!("media/{relative}"))?
+                    || h.has_path(&v.release_root, &format!("public/{relative}"))?
+                {
                     return Ok(true);
                 }
             }
@@ -588,6 +850,39 @@ impl Publisher {
                 uses.push(usage);
             }
         }
+        if crate::history::History::exists(&self.root) {
+            let h = crate::history::History::reader(&self.root)?;
+            for v in h.versions()?.into_iter().filter(|v| v.id != active) {
+                if self.root.join("snapshots").join(&v.id).is_dir() {
+                    continue;
+                }
+                let files = h.files(&v.snapshot_root)?;
+                let context = "Publicação anterior (rollback)";
+                if let Some(key) = files.get("site.json") {
+                    let site: Site = serde_json::from_slice(&h.read_file(key)?)?;
+                    uses.extend(library::site_usage(&site, &decoded, context));
+                }
+                for (name, key) in &files {
+                    if !(name.starts_with("articles/") || name.starts_with("pages/"))
+                        || !name.ends_with("/metadata.json")
+                    {
+                        continue;
+                    }
+                    let metadata: Metadata = serde_json::from_slice(&h.read_file(key)?)?;
+                    let body = files
+                        .get(&name.replace("/metadata.json", "/body.html"))
+                        .map(|key| h.read_file(key))
+                        .transpose()?
+                        .unwrap_or_default();
+                    uses.extend(library::document_usage(
+                        &metadata,
+                        &String::from_utf8(body)?,
+                        &decoded,
+                        context,
+                    ));
+                }
+            }
+        }
         // A retained file alone is also protected: never invent an article reference.
         if uses.is_empty() && self.retained_media(path)? {
             uses.push(library::Usage {
@@ -629,6 +924,21 @@ impl Publisher {
     }
     fn activate(&self, id: &str) -> Result<()> {
         let release = self.release(id)?;
+        if (!self.root.join("releases").join(id).join("public").is_dir()
+            || !self
+                .root
+                .join("snapshots")
+                .join(id)
+                .join("site.json")
+                .is_file())
+            && let Some(v) = self.archived(id)?
+        {
+            ensure!(
+                v.public_hash == release.tree_hash,
+                "history/public record mismatch"
+            );
+            crate::history::History::reader(&self.root)?.materialize(&v)?;
+        }
         ensure!(
             tree_hash(&self.root.join("releases").join(id).join("public"))? == release.tree_hash,
             "release integrity check failed"
@@ -857,6 +1167,7 @@ impl Publisher {
             Ok(()) => {
                 event.result = "activated".into();
                 self.event(&event)?;
+                self.compact_after_switch();
                 Ok(id)
             }
             Err(e) => {
@@ -890,6 +1201,7 @@ impl Publisher {
             Ok(()) => {
                 event.result = "activated".into();
                 self.event(&event)?;
+                self.compact_after_switch();
                 Ok(())
             }
             Err(e) => {
@@ -982,6 +1294,7 @@ pub fn initialize_publishing(
     let publisher = Publisher {
         root: fs::canonicalize(root)?,
         public_url: public_url.trim_end_matches('/').into(),
+        compact_history: true,
     };
     let active = publisher.active()?;
     for name in ["history", "events", "snapshots"] {
@@ -1224,11 +1537,7 @@ pub(super) async fn history(
     } else {
         None
     };
-    let allocated = unique_storage_bytes(&[
-        p.root.join("releases"),
-        p.root.join("snapshots"),
-        p.root.join(".media-blobs"),
-    ])?;
+    let allocated = unique_storage_bytes(&history_storage_roots(&p.root))?;
     let storage = serde_json::json!({"retained_count":retained_count,"archived_count":rows.len()-retained_count,"release_bytes":release_bytes,"snapshot_bytes":snapshot_bytes,"logical_bytes":release_bytes+snapshot_bytes,"total_bytes":allocated,"keep_previous":5,"retention":retention});
     let mut events = Vec::new();
     for file in fs::read_dir(p.root.join("events")).map_err(anyhow::Error::from)? {
@@ -1396,6 +1705,87 @@ pub(super) async fn rollback(
 #[cfg(test)]
 mod publishing_tests {
     use super::*;
+    #[test]
+    fn compact_history_rolls_back_independently_and_deletes_intermediate_versions() {
+        let (_temp, mut p, content, mut doc) = setup();
+        p.compact_history = true;
+        let original = tree_hash(&p.root.join("current")).unwrap();
+        let first = p.deploy(&content, &doc, "baseline", "test").unwrap();
+        assert!(!p.root.join("releases/baseline").exists());
+        assert_eq!(
+            p.release_storage(&p.release("baseline").unwrap()).unwrap()["retained"],
+            true
+        );
+        doc.html = "<p>A later version</p>".into();
+        let second = p.deploy(&content, &doc, &first, "test").unwrap();
+        assert!(!p.root.join("releases").join(&first).exists());
+        let v = p.archived(&first).unwrap().unwrap();
+        let proof = BackedUpRelease {
+            release_hash: v.release_hash,
+            snapshot_hash: v.snapshot_hash,
+            record_hash: crate::storage::file_hash(
+                &p.root.join("history").join(format!("{first}.json")),
+            )
+            .unwrap(),
+        };
+        assert!(
+            p.delete_backed_up_release(&first, "stale", &proof, "verified")
+                .is_err()
+        );
+        assert!(
+            p.delete_backed_up_release(&second, &second, &proof, "verified")
+                .is_err()
+        );
+        assert!(
+            p.delete_backed_up_release(&first, &second, &proof, "verified")
+                .is_ok()
+        );
+        assert!(p.archived(&first).unwrap().is_none());
+        p.rollback_to("baseline", &second, "test").unwrap();
+        assert_eq!(tree_hash(&p.root.join("current")).unwrap(), original);
+        assert!(!p.root.join("releases").join(&second).exists());
+        p.rollback_to(&second, "baseline", "test").unwrap();
+        assert!(
+            fs::read_to_string(p.root.join("current/artigos/original/index.html"))
+                .unwrap()
+                .contains("A later version")
+        );
+        assert_eq!(fs::read_dir(p.root.join("releases")).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(p.root.join("snapshots")).unwrap().count(), 1);
+    }
+    #[test]
+    fn compact_history_recovers_partial_cleanup_and_rejects_corrupt_objects_before_switch() {
+        let (_temp, mut p, content, doc) = setup();
+        p.compact_history = true;
+        // Simulate a crash after recording both roots and removing only one half.
+        let baseline = p.release("baseline").unwrap();
+        crate::history::History::open(&p.root)
+            .unwrap()
+            .record(
+                "baseline",
+                &p.root.join("releases/baseline"),
+                &p.root.join("snapshots/baseline"),
+                &baseline.tree_hash,
+            )
+            .unwrap();
+        let active = p.deploy(&content, &doc, "baseline", "test").unwrap();
+        let h = crate::history::History::reader(&p.root).unwrap();
+        let v = h.version("baseline").unwrap().unwrap();
+        h.materialize(&v).unwrap();
+        fs::remove_dir_all(p.root.join("releases/baseline")).unwrap();
+        p.compact_inactive().unwrap();
+        assert!(!p.root.join("snapshots/baseline").exists());
+        let before = tree_hash(&p.root.join("current")).unwrap();
+        let db = rusqlite::Connection::open(p.root.join(".history.sqlite")).unwrap();
+        db.execute(
+            "UPDATE objects SET data=x'00' WHERE key=?1",
+            [&v.release_root],
+        )
+        .unwrap();
+        assert!(p.rollback_to("baseline", &active, "test").is_err());
+        assert_eq!(p.active().unwrap(), active);
+        assert_eq!(tree_hash(&p.root.join("current")).unwrap(), before);
+    }
     #[test]
     fn compaction_reclaims_duplicate_bytes_and_preserves_content_and_hashes() {
         let (temp, p, content, _) = setup();
@@ -1706,6 +2096,7 @@ mod publishing_tests {
         let p = Publisher {
             root,
             public_url: "http://192.0.2.1".into(),
+            compact_history: false,
         };
         let r = Release {
             id: "baseline".into(),

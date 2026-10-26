@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import sys
+import sqlite3
+import zlib
 import tempfile
 import unittest
 
@@ -37,6 +39,40 @@ class ReceiptTests(unittest.TestCase):
         receipt['verified_at'] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         with self.assertRaises(ValueError):
             retention.verified_manifest(receipt, body)
+
+
+class CompactCoverageTests(unittest.TestCase):
+    def test_archived_proofs_are_derived_from_verified_objects_and_media(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);database=root/'history.sqlite';prefix=root.as_posix().lstrip('/')+'/'
+            db=sqlite3.connect(database)
+            db.executescript('CREATE TABLE objects(key TEXT PRIMARY KEY,data BLOB); CREATE TABLE versions(id TEXT PRIMARY KEY,data TEXT);')
+            def obj(kind,raw):
+                key=kind+':'+hashlib.sha256(raw).hexdigest()
+                db.execute('INSERT OR IGNORE INTO objects VALUES(?,?)',(key,zlib.compress(raw)));return key
+            def directory(values):
+                return obj('d',json.dumps(values,sort_keys=True,separators=(',',':')).encode())
+            def hashed(values):
+                return hashlib.sha256(json.dumps(values,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+            text=obj('f',b'hello');media='m:'+hashlib.sha256(b'image').hexdigest()
+            public=directory({'index.html':text});release=directory({'public':public})
+            snapshot=directory({'image.jpg':media})
+            version=dict(id='r1',release_root=release,snapshot_root=snapshot,
+                release_hash=hashed({'public/index.html':text[2:]}),snapshot_hash=hashed({'image.jpg':media[2:]}),public_hash=hashed({'index.html':text[2:]}))
+            db.execute('INSERT INTO versions VALUES(?,?)',('r1',json.dumps(version)));db.commit();db.close()
+            entries={prefix+'.history.sqlite':{'sha256':retention.digest(database)},
+                     prefix+'.media-blobs/'+media[2:]:{'sha256':media[2:]},prefix+'history/r1.json':{'sha256':'a'*64}}
+            archived=retention.archived_coverage(database,root,entries)
+            receipt={'snapshot_id':'b'*64,'verified_at':datetime.now(timezone.utc).isoformat()}
+            catalog=retention.coverage_catalog(root,entries,receipt,archived)
+            self.assertEqual(catalog['releases']['r1']['release_hash'],version['release_hash'])
+            entries.pop(prefix+'.media-blobs/'+media[2:])
+            with self.assertRaises(ValueError):retention.archived_coverage(database,root,entries)
+            entries[prefix+'.media-blobs/'+media[2:]]={'sha256':media[2:]}
+            with sqlite3.connect(database) as db:db.execute("UPDATE objects SET data=? WHERE key=?",(zlib.compress(b'corrupted'),text))
+            db.close()
+            entries[prefix+'.history.sqlite']['sha256']=retention.digest(database)
+            with self.assertRaises(ValueError):retention.archived_coverage(database,root,entries)
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'Publisher filesystem semantics')

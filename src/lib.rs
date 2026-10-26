@@ -1,6 +1,8 @@
 #[cfg(unix)]
 pub mod admin;
 pub mod build;
+#[cfg(unix)]
+mod history;
 pub mod html;
 pub mod import;
 pub mod model;

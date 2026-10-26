@@ -80,6 +80,24 @@ enum Command {
         content: Option<PathBuf>,
     },
     #[cfg(unix)]
+    /// Enable compact immutable history; run as publisher filesystem owner.
+    CompactHistory {
+        #[arg(long)]
+        state: PathBuf,
+    },
+    #[cfg(unix)]
+    /// Prune only versions covered by root-owned verified backup proof.
+    PruneHistory {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+        #[arg(long, default_value_t = 5)]
+        keep_previous: usize,
+        #[arg(long)]
+        apply: bool,
+    },
+    #[cfg(unix)]
     /// Apply a one-time 480px image cap to articles, preserving private revisions.
     NormalizeArticleImages {
         #[arg(long)]
@@ -173,6 +191,26 @@ fn main() -> Result<()> {
                 "Analytics ingestion completed: {count} new counted page views; raw request data is not printed."
             );
         }
+        #[cfg(unix)]
+        Command::CompactHistory { state } => println!(
+            "{}",
+            alexandria_engine::admin::compact_publisher_history(&state)?
+        ),
+        #[cfg(unix)]
+        Command::PruneHistory {
+            root,
+            expected_active,
+            keep_previous,
+            apply,
+        } => println!(
+            "{}",
+            alexandria_engine::admin::prune_publisher_history(
+                &root,
+                &expected_active,
+                keep_previous,
+                apply
+            )?
+        ),
         #[cfg(unix)]
         Command::CompactMedia { state, content } => {
             println!(

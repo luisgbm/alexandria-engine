@@ -37,7 +37,12 @@ class CaptureTests(unittest.TestCase):
                 (source / name).mkdir(parents=True)
                 (source / name / 'test').write_text(name)
             (source / 'current').symlink_to(source / 'releases')
+            (source / '.history.sqlite').write_bytes(b'compact history database')
             backup.copy_publisher(source, target)
+            self.assertNotEqual((source / '.history.sqlite').stat().st_ino,
+                                (target / '.history.sqlite').stat().st_ino)
+            (source / '.history.sqlite').write_bytes(b'later publication')
+            self.assertEqual((target / '.history.sqlite').read_bytes(), b'compact history database')
             for name in ['releases', 'snapshots', '.media-blobs']:
                 self.assertEqual((source / name / 'test').stat().st_ino,
                                  (target / name / 'test').stat().st_ino)

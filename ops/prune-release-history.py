@@ -11,6 +11,73 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import sqlite3
+import zlib
+
+
+def archived_coverage(database, root, entries):
+    """Derive proofs from the verified backup's object graph, never live claims."""
+    prefix = root.as_posix().lstrip('/') + '/'
+    row = entries.get(prefix + '.history.sqlite')
+    require(row and digest(database) == row.get('sha256'), 'History database differs from verified backup')
+    db = sqlite3.connect(database.as_uri() + '?mode=ro&immutable=1', uri=True)
+    db.execute('PRAGMA trusted_schema=OFF')
+    cache = {}
+
+    def obj(key):
+        require(isinstance(key, str) and re.fullmatch('[dfm]:[a-f0-9]{64}', key), 'Invalid history reference')
+        if key in cache:
+            return cache[key]
+        if key.startswith('m:'):
+            media = entries.get(prefix + '.media-blobs/' + key[2:])
+            require(media and media.get('sha256') == key[2:], 'Archived media missing from verified backup')
+            cache[key] = None
+            return None
+        row = db.execute('SELECT data FROM objects WHERE key=?', (key,)).fetchone()
+        require(row, 'Missing archived object')
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(row[0], 100 * 1024 * 1024 + 1)
+        require(len(raw) <= 100 * 1024 * 1024 and decoder.eof, 'Invalid compressed history object')
+        require(hashlib.sha256(raw).hexdigest() == key[2:], 'Archived object integrity mismatch')
+        if key.startswith('d:'):
+            value = json.loads(raw)
+            require(isinstance(value, dict) and all(isinstance(name, str) and name not in ('', '.', '..')
+                    and not any(c in name for c in '/\\\0') for name in value), 'Unsafe archived path')
+        else:
+            value = None
+        cache[key] = value
+        return value
+
+    def tree(key, depth=0):
+        require(depth <= 64 and key.startswith('d:'), 'Invalid archived directory')
+        result = {}
+        for name, child in obj(key).items():
+            obj(child)
+            if child.startswith('d:'):
+                result.update({name + '/' + path: value for path, value in tree(child, depth + 1).items()})
+            else:
+                result[name] = child[2:]
+        return result
+
+    def tree_hash(files):
+        return hashlib.sha256(json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+    try:
+        result = {}
+        for identity, body in db.execute('SELECT id,data FROM versions'):
+            identifier(identity)
+            version = json.loads(body)
+            require(version['id'] == identity, 'Archived identity mismatch')
+            release = tree(version['release_root'])
+            snapshot = tree(version['snapshot_root'])
+            public = {name.removeprefix('public/'): value for name, value in release.items() if name.startswith('public/')}
+            hashes = dict(release_hash=tree_hash(release), snapshot_hash=tree_hash(snapshot))
+            require(all(version[key] == value for key, value in hashes.items()) and
+                    tree_hash(public) == version['public_hash'], 'Archived tree integrity mismatch')
+            result[identity] = hashes
+        return result
+    finally:
+        db.close()
 
 
 def require(value, message):
@@ -63,7 +130,7 @@ def inventory_tree(folder, root, entries):
     return size
 
 
-def coverage_catalog(root, entries, receipt):
+def coverage_catalog(root, entries, receipt, archived=None):
     prefix = root.as_posix().lstrip('/') + '/'
     releases = {}
     for key, record in entries.items():
@@ -80,6 +147,9 @@ def coverage_catalog(root, entries, receipt):
                 break
             hashes['release_hash' if name == 'releases' else 'snapshot_hash'] = hashlib.sha256(
                 json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        if archived and identity in archived:
+            require(all(archived[identity][key] == value for key, value in hashes.items()), 'Materialized/archived backup mismatch')
+            hashes = archived[identity]
         if len(hashes) == 2:
             releases[identity] = dict(hashes, record_hash=record['sha256'])
     return {'schema_version': 1, 'publisher_root': str(root), 'snapshot_id': receipt['snapshot_id'],
@@ -103,6 +173,9 @@ def store_coverage(root, catalog):
 
 
 def gc_media_pool(root):
+    # Native history GC accounts for references held only in the database.
+    if (root / '.history.sqlite').exists():
+        return 0
     pool = root / '.media-blobs'
     if not pool.exists():
         return 0
@@ -118,6 +191,7 @@ def gc_media_pool(root):
 
 
 def prune(root, entries, receipt, keep_previous=5, apply=False):
+    require(not (root / '.history.sqlite').exists(), 'Compact history requires native prune-history')
     require(root.is_absolute() and root.resolve() == root and not root.is_symlink(), 'Canonical publisher root required')
     require(1 <= keep_previous <= 50, 'Keep between one and fifty rollback releases')
     active_path = (root / 'current').resolve(strict=True)
@@ -187,6 +261,7 @@ def main():
     parser.add_argument('--keep-previous', type=int, default=5)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--record-coverage-only', action='store_true')
+    parser.add_argument('--engine', type=Path, default=Path('/opt/alexandria/admin-staging/alexandria-engine'))
     args = parser.parse_args()
     require(os.geteuid() == 0, 'Root required')
     os.umask(0o077)
@@ -199,8 +274,29 @@ def main():
         body = subprocess.check_output(['restic', '--repo', str(args.repo), '--password-file', str(args.password_file),
                                        'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/manifest.json'])
         entries = verified_manifest(receipt, body)
-        catalog = coverage_catalog(args.root, entries, receipt)
+        archived = None
+        database_key = args.root.as_posix().lstrip('/') + '/.history.sqlite'
+        if database_key in entries:
+            with tempfile.TemporaryDirectory(prefix='alexandria-history-proof-') as scratch:
+                database = Path(scratch) / 'history.sqlite'
+                with database.open('xb') as stream:
+                    subprocess.run(['restic', '--repo', str(args.repo), '--password-file', str(args.password_file),
+                                    'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/' + database_key],
+                                   stdout=stream, check=True)
+                archived = archived_coverage(database, args.root, entries)
+        catalog = coverage_catalog(args.root, entries, receipt, archived)
         store_coverage(args.root, catalog)
+        if not args.record_coverage_only and (args.root / '.history.sqlite').exists():
+            import pwd
+            active = (args.root / 'current').resolve(strict=True).parent.name
+            fcntl.flock(publish_lock, fcntl.LOCK_UN)
+            command = ['runuser', '-u', pwd.getpwuid(args.root.stat().st_uid).pw_name, '--', str(args.engine),
+                       'prune-history', '--root', str(args.root), '--expected-active', active,
+                       '--keep-previous', str(args.keep_previous)]
+            if args.apply:
+                command.append('--apply')
+            subprocess.run(command, check=True)
+            return
         report = ({'coverage_recorded': True, 'covered_releases': len(catalog['releases']),
                    'backup_snapshot': receipt['snapshot_id']} if args.record_coverage_only else
                   prune(args.root, entries, receipt, args.keep_previous, args.apply))

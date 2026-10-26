@@ -89,12 +89,19 @@ def main():
         assert 'version A' in public_text(state['path'])
         private.write_text(json.dumps(state))
         rows = []
-        for folder in ['releases', 'snapshots', 'history']:
+        for folder in ['releases', 'snapshots', 'history', '.media-blobs']:
             for path in sorted((publisher / folder).rglob('*')):
                 assert not path.is_symlink()
                 if path.is_file():
                     rows.append({'path': path.as_posix().lstrip('/'), 'size': path.stat().st_size,
                                  'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+        archive = publisher / '.history.sqlite'
+        if archive.exists():
+            with sqlite3.connect(archive) as db:
+                assert db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0] == 0
+            db.close()
+            rows.append({'path': archive.as_posix().lstrip('/'), 'size': archive.stat().st_size,
+                         'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()})
         manifest = root / 'backup/deletion-manifest.json'
         manifest.write_text(json.dumps({'files': rows}, sort_keys=True))
         restic = ['restic', '--repo', str(root / 'backup/repository'),
@@ -116,6 +123,12 @@ def main():
         assert 'version B' in public_text(state['path'])
         api('/api/deployments/delete', {'release': newer, 'expected_active': newer}, expected=400)
         api('/api/deployments/delete', {'release': state['target'], 'expected_active': state['target']}, expected=409)
+        archive = publisher / '.history.sqlite'
+        objects_before = None
+        if archive.exists():
+            with sqlite3.connect(archive) as db:
+                objects_before = db.execute('SELECT count(*) FROM objects').fetchone()[0]
+            db.close()
         bytes_before = sum(p.stat().st_size for name in ['releases', 'snapshots']
                            for p in (publisher / name).rglob('*') if p.is_file())
         result = api('/api/deployments/delete', {'release': state['target'], 'expected_active': newer})
@@ -125,7 +138,14 @@ def main():
         assert (publisher / 'history' / (state['target'] + '.json')).is_file()
         bytes_after = sum(p.stat().st_size for name in ['releases', 'snapshots']
                           for p in (publisher / name).rglob('*') if p.is_file())
-        assert bytes_after < bytes_before and api('/api/deployments')['active'] == newer
+        if objects_before is not None:
+            with sqlite3.connect(archive) as db:
+                assert db.execute('SELECT count(*) FROM versions WHERE id=?',(state['target'],)).fetchone()[0] == 0
+                assert db.execute('SELECT count(*) FROM objects').fetchone()[0] < objects_before
+            db.close()
+        else:
+            assert bytes_after < bytes_before
+        assert api('/api/deployments')['active'] == newer
         assert 'version B' in public_text(state['path'])
         api('/api/rollback', {'release': state['original'], 'expected_active': newer})
         assert api('/api/deployments')['active'] == state['original']
@@ -137,7 +157,8 @@ def main():
         report = {'passed': True, 'verified_pc_backup_required': True, 'active_and_stale_protected': True,
                   'older_publication_deleted': True, 'audit_record_preserved': True,
                   'rollback_after_deletion': True, 'unbacked_older_version_blocked': True,
-                  'bytes_removed': bytes_before - bytes_after,
+                  'materialized_bytes_removed': bytes_before - bytes_after,
+                  'compact_history': archive.exists(),
                   'authentication': 'temporary session only in a disposable zero-passkey database'}
         (root / 'backup/deletion-report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(report, indent=2))

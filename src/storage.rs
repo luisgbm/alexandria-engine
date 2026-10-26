@@ -1,4 +1,6 @@
 //! Shared immutable media. Editable HTML/JSON and databases are never linked.
+#[cfg(unix)]
+use anyhow::Context;
 use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
@@ -172,13 +174,18 @@ pub(crate) fn gc(pool: &Path) -> Result<u64> {
         "unsafe media pool"
     );
     let mut removed = 0;
+    let pins = crate::history::media_pins(pool.parent().context("media pool parent missing")?)?;
     for entry in fs::read_dir(pool)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let meta = entry.path().symlink_metadata()?;
         ensure!(meta.is_file(), "unexpected media pool entry");
-        if name.len() == 64 && name.bytes().all(|c| c.is_ascii_hexdigit()) && meta.nlink() == 1 {
+        if name.len() == 64
+            && name.bytes().all(|c| c.is_ascii_hexdigit())
+            && meta.nlink() == 1
+            && !pins.contains(name.as_ref())
+        {
             removed += meta.len();
             fs::remove_file(entry.path())?;
         }
@@ -319,4 +326,32 @@ mod tests {
         std::os::unix::fs::symlink(source, &link).unwrap();
         assert!(media(&link, &t.path().join("bad"), Some(&pool)).is_err());
     }
+}
+
+#[cfg(unix)]
+pub(crate) fn tree_hash(root: &Path) -> Result<String> {
+    use std::collections::BTreeMap;
+    fn visit(root: &Path, dir: &Path, rows: &mut BTreeMap<String, String>) -> Result<()> {
+        for item in fs::read_dir(dir)? {
+            let item = item?;
+            let kind = item.file_type()?;
+            ensure!(!kind.is_symlink(), "release contains a symlink");
+            if kind.is_dir() {
+                visit(root, &item.path(), rows)?;
+            } else {
+                ensure!(kind.is_file(), "non-file in release");
+                rows.insert(
+                    item.path()
+                        .strip_prefix(root)?
+                        .to_string_lossy()
+                        .into_owned(),
+                    crate::storage::file_hash(&item.path())?,
+                );
+            }
+        }
+        Ok(())
+    }
+    let mut rows = BTreeMap::new();
+    visit(root, root, &mut rows)?;
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(&rows)?)))
 }
