@@ -47,6 +47,7 @@ fn public(entries: &[Entry]) -> Vec<&Entry> {
 
 struct Writer<'a> {
     root: &'a Path,
+    media_pool: Option<&'a Path>,
     files: BTreeSet<String>,
     pages: BTreeSet<String>,
 }
@@ -295,6 +296,14 @@ fn archive(
 }
 
 pub fn run(content: &Path, output: &Path) -> Result<()> {
+    run_with_media_pool(content, output, None)
+}
+
+pub(crate) fn run_with_media_pool(
+    content: &Path,
+    output: &Path,
+    media_pool: Option<&Path>,
+) -> Result<()> {
     ensure!(
         !output.exists(),
         "release directory already exists; use a new release path"
@@ -305,7 +314,7 @@ pub fn run(content: &Path, output: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::create_dir(&staging)?;
-    let result = build_into(content, &staging);
+    let result = build_into(content, &staging, media_pool);
     match result {
         Ok(()) => {
             fs::rename(&staging, output)?;
@@ -319,7 +328,7 @@ pub fn run(content: &Path, output: &Path) -> Result<()> {
     }
 }
 
-fn build_into(content: &Path, out: &Path) -> Result<()> {
+fn build_into(content: &Path, out: &Path, media_pool: Option<&Path>) -> Result<()> {
     let site = read_site(&content.join("site.json"))?;
     ensure!(
         site.schema_version == SCHEMA_VERSION,
@@ -367,6 +376,7 @@ fn build_into(content: &Path, out: &Path) -> Result<()> {
     let public_root = out.join("public");
     fs::create_dir(&public_root)?;
     let mut writer = Writer {
+        media_pool,
         root: &public_root,
         files: BTreeSet::new(),
         pages: BTreeSet::new(),
@@ -658,7 +668,16 @@ fn copy_media(root: &Path, current: &Path, writer: &mut Writer<'_>) -> Result<()
                 ["jpg", "jpeg", "png", "gif", "webp", "ico", "avif", "pdf"].contains(&ext.as_str()),
                 "active or unsupported media type"
             );
-            writer.file(&format!("/{relative}"), fs::read(e.path())?)?;
+            let key = relative_path(&format!("/{relative}"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            ensure!(
+                writer.files.insert(key.clone()),
+                "duplicate generated media"
+            );
+            let dest = writer.root.join(&key);
+            ensure!(!dest.exists(), "output collision: {key}");
+            crate::storage::media(&e.path(), &dest, writer.media_pool)?;
         }
     }
     Ok(())
@@ -673,26 +692,66 @@ struct SearchDocument {
 }
 fn search(writer: &mut Writer<'_>, _site: &Site, entries: &[&Entry]) -> Result<()> {
     let mut documents = Vec::new();
-    let mut index: BTreeMap<String, BTreeMap<usize, u32>> = BTreeMap::new();
-    for (i, e) in entries.iter().enumerate() {
+    let mut text_groups: BTreeMap<u32, BTreeMap<String, SearchDocument>> = BTreeMap::new();
+    let mut shards: BTreeMap<String, BTreeMap<String, BTreeMap<String, u32>>> = BTreeMap::new();
+    for e in entries {
         let text = html::text(&e.body);
         for (field, weight) in [(&e.metadata.title, 5u32), (&text, 1u32)] {
             for term in normalize(field)
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|s| !s.is_empty())
             {
-                *index.entry(term.into()).or_default().entry(i).or_default() += weight;
+                let shard = term
+                    .chars()
+                    .take(2)
+                    .map(|c| format!("{:x}", c as u32))
+                    .collect::<Vec<_>>()
+                    .join("-");
+                *shards
+                    .entry(shard)
+                    .or_default()
+                    .entry(term.into())
+                    .or_default()
+                    .entry(e.metadata.id.clone())
+                    .or_default() += weight;
             }
         }
-        documents.push(SearchDocument {
+        let document = SearchDocument {
             id: e.metadata.id.clone(),
             title: e.metadata.title.clone(),
             url: e.metadata.permalink.clone().unwrap(),
             text,
-        });
+        };
+        documents
+            .push(serde_json::json!({"id":document.id,"title":document.title,"url":document.url}));
+        let group = document.id.bytes().fold(0u32, |hash, value| {
+            hash.wrapping_mul(31).wrapping_add(u32::from(value))
+        }) % 16;
+        text_groups
+            .entry(group)
+            .or_default()
+            .insert(document.id.clone(), document);
     }
     writer.file("/search/documents.json", serde_json::to_vec(&documents)?)?;
-    writer.file("/search/index.json", serde_json::to_vec(&index)?)?;
+    let keys = shards.keys().collect::<Vec<_>>();
+    writer.file(
+        "/search/index.json",
+        serde_json::to_vec(
+            &serde_json::json!({"schema_version":2,"shards":keys,"text_shards":16}),
+        )?,
+    )?;
+    for (key, index) in shards {
+        writer.file(
+            &format!("/search/terms-{key}.json"),
+            serde_json::to_vec(&index)?,
+        )?;
+    }
+    for (group, text) in text_groups {
+        writer.file(
+            &format!("/search/text-group-{group:x}.json"),
+            serde_json::to_vec(&text)?,
+        )?;
+    }
     // Keep old search links working, with the same homepage and inline search UI.
     // The client canonicalizes /search/?q=... to /?q=... without another load.
     let home = fs::read_to_string(writer.root.join("index.html"))?;

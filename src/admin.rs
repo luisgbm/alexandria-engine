@@ -33,6 +33,13 @@ use webauthn_rs::prelude::*;
 mod editorial;
 #[path = "admin/library.rs"]
 mod library;
+
+pub fn compact_publisher_media(
+    state: &std::path::Path,
+    content: Option<&std::path::Path>,
+) -> anyhow::Result<serde_json::Value> {
+    publishing::compact_media(state, content)
+}
 #[path = "admin/permalinks.rs"]
 mod permalinks;
 #[path = "admin/publishing.rs"]
@@ -730,6 +737,9 @@ fn make_app(content: PathBuf, state: &Path, origin: String, rp: String) -> Resul
         "invalid WebAuthn display name"
     );
     let webauthn = WebauthnBuilder::new(&rp, &u)?.rp_name(&rp_name).build()?;
+    // Heavy decodes and publication builds share one admission permit. Requests
+    // get an explicit busy response rather than overlapping large allocations.
+    let heavy_slots = Arc::new(tokio::sync::Semaphore::new(1));
     Ok(Arc::new(App {
         db: Mutex::new(db),
         store: Mutex::new(store),
@@ -741,13 +751,13 @@ fn make_app(content: PathBuf, state: &Path, origin: String, rp: String) -> Resul
         user,
         flows: Mutex::new(HashMap::new()),
         previews: Mutex::new(HashMap::new()),
-        upload_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+        upload_slots: heavy_slots.clone(),
         rate: Mutex::new(VecDeque::new()),
         publisher,
         analytics_db: std::env::var_os("ALEXANDRIA_ANALYTICS_DB")
             .map(PathBuf::from)
             .unwrap_or_else(|| state.join("analytics.sqlite")),
-        publish_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+        publish_slots: heavy_slots,
     }))
 }
 fn router(app: Shared) -> Router {
@@ -1487,6 +1497,37 @@ async fn media(
         .map_err(|_| ApiError(StatusCode::NOT_FOUND, "Imagem não encontrada.".into()))?;
     Ok(image_response(&file)?)
 }
+struct BoundedImageOutput {
+    inner: Cursor<Vec<u8>>,
+    limit: u64,
+}
+impl Write for BoundedImageOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.inner.position().saturating_add(bytes.len() as u64) > self.limit {
+            return Err(std::io::Error::other("encoded image size limit"));
+        }
+        self.inner.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+impl std::io::Seek for BoundedImageOutput {
+    fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+        use std::io::SeekFrom;
+        let next = match position {
+            SeekFrom::Start(value) => i128::from(value),
+            SeekFrom::End(offset) => self.inner.get_ref().len() as i128 + i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.inner.position()) + i128::from(offset),
+        };
+        if next < 0 || next > i128::from(self.limit) {
+            return Err(std::io::Error::other("encoded image size limit"));
+        }
+        self.inner.set_position(next as u64);
+        Ok(next as u64)
+    }
+}
+
 async fn upload(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -1499,6 +1540,12 @@ async fn upload(
             "Aguarde o envio das outras imagens.".into(),
         )
     })?;
+    let _publication_lock = app
+        .publisher
+        .as_ref()
+        .map(|p| p.lock())
+        .transpose()
+        .map_err(|_| bad("Aguarde a publicação terminar antes de enviar a imagem."))?;
     let field = multipart
         .next_field()
         .await
@@ -1513,6 +1560,7 @@ async fn upload(
         return Err(bad("Envie uma imagem de até 8 MB."));
     }
     let content = app.store.lock().unwrap().root.clone();
+    let publisher = app.publisher.clone();
     let saved = tokio::task::spawn_blocking(move || -> Result<String> {
         let reader = image::ImageReader::new(Cursor::new(&bytes)).with_guessed_format()?;
         let format = reader.format().context("unknown image format")?;
@@ -1545,9 +1593,13 @@ async fn upload(
         } else {
             image::ImageFormat::Png
         };
-        let mut output = Cursor::new(Vec::new());
+        let mut output = BoundedImageOutput {
+            inner: Cursor::new(Vec::new()),
+            limit: 12 * 1024 * 1024,
+        };
         decoded.write_to(&mut output, output_format)?;
-        let data = output.into_inner();
+        drop(decoded);
+        let data = output.inner.into_inner();
         ensure!(data.len() <= 12 * 1024 * 1024, "encoded image size limit");
         let name = format!(
             "{:x}.{}",
@@ -1563,6 +1615,9 @@ async fn upload(
         let file = folder.join(&name);
         if !file.exists() {
             private_file(&file, &data)?;
+        }
+        if let Some(publisher) = publisher {
+            publisher.share_upload(&content, &file)?;
         }
         Ok(format!("/uploads/{name}"))
     })

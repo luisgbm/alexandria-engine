@@ -14,16 +14,31 @@ if sys.platform == 'linux':
 
 @unittest.skipUnless(sys.platform == 'linux', 'Linux backup cp/hardlink semantics')
 class CaptureTests(unittest.TestCase):
+    def test_library_pixels_link_but_state_and_editorial_files_copy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'data';target=root/'capture'
+            for name in ['content/media','content/editorial','state']:(source/name).mkdir(parents=True)
+            image=source/'content/media/image.jpg';image.write_bytes(b'original')
+            database=source/'state/admin.sqlite';database.write_bytes(b'database')
+            text=source/'content/editorial/draft';text.write_bytes(b'draft')
+            backup.copy_admin_tree(source,target)
+            self.assertEqual(image.stat().st_ino,(target/'content/media/image.jpg').stat().st_ino)
+            self.assertNotEqual(database.stat().st_ino,(target/'state/admin.sqlite').stat().st_ino)
+            text.write_bytes(b'edited');database.write_bytes(b'updated');image.unlink()
+            self.assertEqual((target/'content/media/image.jpg').read_bytes(),b'original')
+            self.assertEqual((target/'state/admin.sqlite').read_bytes(),b'database')
+            self.assertEqual((target/'content/editorial/draft').read_bytes(),b'draft')
+
     def test_history_survives_source_unlink_and_mutable_files_are_independent(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source, target = root / 'publisher', root / 'capture'
-            for name in ['releases', 'snapshots', 'events']:
+            for name in ['releases', 'snapshots', '.media-blobs', 'events']:
                 (source / name).mkdir(parents=True)
                 (source / name / 'test').write_text(name)
             (source / 'current').symlink_to(source / 'releases')
             backup.copy_publisher(source, target)
-            for name in ['releases', 'snapshots']:
+            for name in ['releases', 'snapshots', '.media-blobs']:
                 self.assertEqual((source / name / 'test').stat().st_ino,
                                  (target / name / 'test').stat().st_ino)
                 (source / name / 'test').unlink()

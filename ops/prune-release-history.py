@@ -102,6 +102,21 @@ def store_coverage(root, catalog):
     temporary.replace(directory / 'coverage.json')
 
 
+def gc_media_pool(root):
+    pool = root / '.media-blobs'
+    if not pool.exists():
+        return 0
+    require(pool.is_dir() and not pool.is_symlink(), 'Unsafe media pool')
+    removed = 0
+    for path in pool.iterdir():
+        info = path.lstat()
+        require(path.is_file() and not path.is_symlink(), 'Unsafe media pool entry')
+        if re.fullmatch('[a-f0-9]{64}', path.name) and info.st_nlink == 1:
+            removed += info.st_size
+            path.unlink()
+    return removed
+
+
 def prune(root, entries, receipt, keep_previous=5, apply=False):
     require(root.is_absolute() and root.resolve() == root and not root.is_symlink(), 'Canonical publisher root required')
     require(1 <= keep_previous <= 50, 'Keep between one and fifty rollback releases')
@@ -144,7 +159,8 @@ def prune(root, entries, receipt, keep_previous=5, apply=False):
                 if target.exists():
                     require(target.resolve() == target and not target.is_symlink(), 'Unsafe deletion path')
                     shutil.rmtree(target)
-    report = {'applied': apply, 'checked_at': datetime.now(timezone.utc).isoformat(),
+    media_gc_bytes = gc_media_pool(root) if apply else 0
+    report = {'applied': apply, 'media_gc_bytes': media_gc_bytes, 'checked_at': datetime.now(timezone.utc).isoformat(),
               'keep_previous': keep_previous, 'active': active, 'retained_ids': sorted(keep),
               'removed' if apply else 'candidates': candidates, 'deferred': deferred,
               'covered_bytes': sum(item['bytes'] for item in candidates),

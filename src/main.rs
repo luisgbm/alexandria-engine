@@ -72,6 +72,14 @@ enum Command {
         expected_active: String,
     },
     #[cfg(unix)]
+    /// Share immutable media bytes without changing content; run as publisher filesystem owner.
+    CompactMedia {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        content: Option<PathBuf>,
+    },
+    #[cfg(unix)]
     /// Apply a one-time 480px image cap to articles, preserving private revisions.
     NormalizeArticleImages {
         #[arg(long)]
@@ -163,6 +171,13 @@ fn main() -> Result<()> {
             let count = alexandria_engine::analytics::ingest(&site_root, &logs, &state)?;
             println!(
                 "Analytics ingestion completed: {count} new counted page views; raw request data is not printed."
+            );
+        }
+        #[cfg(unix)]
+        Command::CompactMedia { state, content } => {
+            println!(
+                "{}",
+                alexandria_engine::admin::compact_publisher_media(&state, content.as_deref())?
             );
         }
         #[cfg(unix)]

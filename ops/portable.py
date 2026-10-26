@@ -114,6 +114,8 @@ def write(path, value, mode=0o600):
 
 
 def execute(*args, **kwargs):
+    if args and str(args[0]) == 'restic':
+        kwargs.setdefault('env', dict(os.environ, GOGC='50', GOMAXPROCS='1'))
     return subprocess.run([str(x) for x in args], check=True, **kwargs)
 
 
@@ -396,6 +398,7 @@ def install(c, args):
     uploads = root / 'data/content/media/uploads'
     if any(uploads.iterdir()):
         shutil.copytree(uploads, root / 'publish/snapshots/initial/media/uploads', dirs_exist_ok=True)
+    execute(executable, 'compact-media', '--state', root / 'data/state', '--content', root / 'data/content')
     (root / 'publish/publish.lock').touch(mode=0o600, exist_ok=True)
     chown_tree(root / 'publish', user, user)
     chown_tree(root / 'data', user, user)
@@ -484,6 +487,80 @@ def resume(c):
         marker.unlink()
 
 
+def allocated_bytes(paths, excluded=()):
+    """Physical blocks once per inode; never follow symlinks or read secrets."""
+    from itertools import chain
+    seen = set()
+    total = 0
+    for root in paths:
+        if not root.exists() or root.is_symlink():
+            continue
+        for path in chain((root,),root.rglob('*')) if root.is_dir() else (root,):
+            if path.is_symlink() or any(path.is_relative_to(skip) for skip in excluded):
+                continue
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                continue
+            identity = (info.st_dev, info.st_ino)
+            if identity not in seen:
+                seen.add(identity)
+                total += info.st_blocks * 512
+    return total
+
+
+def space_budget(paths, immutable, repository):
+    source = allocated_bytes(paths)
+    mutable = allocated_bytes(paths, immutable)
+    rewrite = allocated_bytes([repository])
+    reserve = 256 * 1024**2
+    return {'required_bytes': source + mutable + rewrite + reserve,
+            'source_bytes': source, 'mutable_capture_bytes': mutable,
+            'repository_rewrite_bytes': rewrite, 'reserve_bytes': reserve}
+
+
+def backup_space_budget(c):
+    root=Path(c['root'])
+    paths=[root/name for name in ['data','publish','bin','etc']]+[Path(p) for p in c['backup_extra_paths']]
+    immutable=[root/'publish'/name for name in ['releases','snapshots','.media-blobs']]+[root/'data/content/media']
+    return space_budget(paths,immutable,root/'backup/repository')
+
+
+def capture_publisher(source, target):
+    """Link immutable media/releases while copying mutable state independently.
+
+    Caller stops writers and holds publish.lock. Never chmod/checkpoint linked
+    files. SQLite must always remain in the independently copied data tree.
+    """
+    target.mkdir(mode=0o700)
+    for child in source.iterdir():
+        immutable = child.name in {'releases', 'snapshots', '.media-blobs'}
+        if immutable:
+            require(child.is_dir() and not child.is_symlink(), 'unsafe immutable publisher directory')
+            require(child.stat().st_dev == target.stat().st_dev, 'capture requires same filesystem')
+            for item in child.rglob('*'):
+                require(not item.is_symlink() and item.suffix not in {'.sqlite', '.sqlite-wal', '.sqlite-shm'},
+                        'unsafe immutable publisher file')
+        execute('cp', '-al' if immutable else '-a', child, target / child.name)
+    shutil.copystat(source, target)
+
+
+def capture_data(source, target):
+    """Keep SQLite/metadata independent; immutable library pixels may link."""
+    target.mkdir(mode=0o700)
+    for child in source.iterdir():
+        if child.name == 'content' and child.is_dir() and not child.is_symlink():
+            capture_data(child,target/child.name)
+        elif source.name == 'content' and child.name == 'media':
+            require(child.is_dir() and not child.is_symlink(),'unsafe media store')
+            for item in child.rglob('*'):
+                require(not item.is_symlink() and item.suffix not in {'.sqlite','.sqlite-wal','.sqlite-shm'},'unsafe immutable media file')
+            execute('cp','-al',child,target/child.name)
+        else:
+            execute('cp','-a',child,target/child.name)
+    shutil.copystat(source,target)
+
+
 def backup(c):
     import fcntl
     require(os.geteuid() == 0, 'root required')
@@ -493,6 +570,8 @@ def backup(c):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         capture = folder / 'capture'
         require(not capture.exists(), 'prior incomplete capture exists; review it first')
+        budget=backup_space_budget(c)
+        require(shutil.disk_usage(root).free >= budget['required_bytes'], 'insufficient free space for capture, repository rewrite and reserve')
         capture.mkdir(mode=0o700)
         active = [unit for unit in [ns['analytics'] + '.timer', ns['analytics'] + '.service', ns['admin'] + '.service']
                   if subprocess.run(['systemctl', 'is-active', '--quiet', unit], stdout=subprocess.DEVNULL).returncode == 0]
@@ -500,11 +579,21 @@ def backup(c):
         try:
             if active:
                 execute('systemctl', 'stop', *active)
+            import pwd
+            user=pwd.getpwuid((root/'data/state').stat().st_uid).pw_name
+            execute('runuser','-u',user,'--',root/'bin/alexandria-engine','compact-media',
+                    '--state',root/'data/state','--content',root/'data/content',stdout=subprocess.DEVNULL)
             with (root / 'publish/publish.lock').open('r+') as publisher_lock:
                 fcntl.flock(publisher_lock, fcntl.LOCK_EX)
                 for name in ['data', 'publish', 'bin', 'etc']:
                     (capture / 'instance').mkdir(exist_ok=True)
-                    execute('cp', '-a', root / name, capture / 'instance' / name)
+                    target = capture / 'instance' / name
+                    if name == 'publish':
+                        capture_publisher(root / name, target)
+                    elif name == 'data':
+                        capture_data(root / name,target)
+                    else:
+                        execute('cp', '-a', root / name, target)
                 for path in c['backup_extra_paths']:
                     (capture / 'extra').mkdir(exist_ok=True)
                     execute('cp', '-a', '--parents', path, capture / 'extra')
@@ -580,7 +669,8 @@ def health(c):
             c[key] + '/'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if probe.returncode:
             failures.append(label + '-http-failure')
-    if shutil.disk_usage(root).free < 3 * 1024**3:
+    budget=backup_space_budget(c)
+    if shutil.disk_usage(root).free < budget['required_bytes']:
         failures.append('low-disk')
     for label in ['public', 'admin']:
         if origin(c['public_url'] if label == 'public' else c['admin_origin']).scheme == 'https':
@@ -593,7 +683,7 @@ def health(c):
             failures.append('server-backup-stale')
     except (OSError, ValueError, KeyError):
         failures.append('server-backup-missing')
-    report = {'healthy': not failures, 'failures': failures, 'checked_at': datetime.now(timezone.utc).isoformat(),
+    report = {'healthy': not failures, 'failures': failures, 'disk_budget':budget, 'checked_at': datetime.now(timezone.utc).isoformat(),
               'external_notifications': False, 'pc_copy_freshness': 'verify independently'}
     write(root / 'backup/health.json', json.dumps(report, indent=2))
     print(json.dumps(report))

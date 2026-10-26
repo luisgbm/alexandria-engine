@@ -14,6 +14,18 @@ spec.loader.exec_module(retention)
 
 
 class ReceiptTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux hardlink semantics')
+    def test_media_gc_only_removes_blobs_without_retained_or_capture_links(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);pool=root/'.media-blobs';pool.mkdir()
+            used=pool/('a'*64);used.write_bytes(b'kept')
+            unused=pool/('b'*64);unused.write_bytes(b'unused')
+            capture=root/'capture';capture.hardlink_to(used)
+            self.assertEqual(retention.gc_media_pool(root),6)
+            self.assertTrue(used.exists());self.assertFalse(unused.exists())
+            capture.unlink()
+            self.assertEqual(retention.gc_media_pool(root),4)
+
     def test_stale_receipts_and_different_manifests_are_rejected(self):
         body = b'{"files":[]}'
         receipt = {'snapshot_id': 'a' * 64, 'verification': 'restic-check-read-data',

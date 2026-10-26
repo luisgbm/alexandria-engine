@@ -172,5 +172,54 @@ class DeploymentTests(unittest.TestCase):
             self.assertFalse((root / 'pull.lock').exists())
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux hardlink semantics')
+class ImmutableCaptureTests(unittest.TestCase):
+    def test_space_budget_counts_shared_images_once_and_reserves_mutable_copy_and_prune_space(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);media=root/'media';media.mkdir();mutable=root/'state';mutable.mkdir();repo=root/'repo';repo.mkdir()
+            (media/'image').write_bytes(b'x'*1024*1024)
+            before=deploy.space_budget([media,mutable],[media],repo)
+            (media/'alias').hardlink_to(media/'image')
+            shared=deploy.space_budget([media,mutable],[media],repo)
+            self.assertLess(shared['required_bytes']-before['required_bytes'],64*1024)
+            (mutable/'database').write_bytes(b'y'*1024*1024)
+            after=deploy.space_budget([media,mutable],[media],repo)
+            self.assertGreaterEqual(after['required_bytes']-shared['required_bytes'],2*1024*1024)
+            (repo/'pack').write_bytes(b'z'*1024*1024)
+            rewrite=deploy.space_budget([media,mutable],[media],repo)
+            self.assertGreaterEqual(rewrite['required_bytes']-after['required_bytes'],1024*1024)
+            self.assertEqual(rewrite['reserve_bytes'],256*1024*1024)
+
+    def test_data_capture_links_only_immutable_library_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'data';target=root/'capture'
+            (source/'content/media').mkdir(parents=True);(source/'state').mkdir()
+            image=source/'content/media/image.jpg';image.write_bytes(b'image')
+            database=source/'state/admin.sqlite';database.write_bytes(b'database')
+            deploy.capture_data(source,target)
+            self.assertEqual(image.stat().st_ino,(target/'content/media/image.jpg').stat().st_ino)
+            self.assertNotEqual(database.stat().st_ino,(target/'state/admin.sqlite').stat().st_ino)
+            image.unlink();database.write_bytes(b'new')
+            self.assertEqual((target/'content/media/image.jpg').read_bytes(),b'image')
+            self.assertEqual((target/'state/admin.sqlite').read_bytes(),b'database')
+
+    def test_capture_shares_only_immutable_files_and_survives_unlink(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'publish'
+            for name in ['releases', 'snapshots', '.media-blobs', 'events']:
+                (source / name).mkdir(parents=True)
+                (source / name / 'item').write_text(name)
+            target = root / 'capture'
+            deploy.capture_publisher(source, target)
+            for name in ['releases', 'snapshots', '.media-blobs']:
+                self.assertEqual((source / name / 'item').stat().st_ino,
+                                 (target / name / 'item').stat().st_ino)
+                (source / name / 'item').unlink()
+                self.assertEqual((target / name / 'item').read_text(), name)
+            (source / 'events/item').write_text('changed')
+            self.assertEqual((target / 'events/item').read_text(), 'events')
+
+
 if __name__ == '__main__':
     unittest.main()

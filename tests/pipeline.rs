@@ -211,6 +211,63 @@ fn broken_new_media_prevents_release_completion() {
 }
 
 #[test]
+fn search_shards_keep_existing_ids_and_unchanged_text_when_a_new_article_is_added() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (archive, rendered, inventory) = fixture(root);
+    let content = root.join("content");
+    import::run(&archive, &rendered, &inventory, &content).unwrap();
+    let first = root.join("first");
+    build::run(&content, &first).unwrap();
+    let mut entry = load_entries(&content)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.metadata.status == "published")
+        .unwrap();
+    let old_id = entry.metadata.id.clone();
+    entry.metadata.id = "native-new".into();
+    entry.metadata.wordpress_id = String::new();
+    entry.metadata.title = "Zulu".into();
+    entry.metadata.permalink = Some("/artigos/new/".into());
+    entry.metadata.legacy_urls.clear();
+    entry.metadata.published_at = Some("2026-10-26T12:00:00Z".into());
+    let folder = content.join("articles/native-new");
+    fs::create_dir_all(&folder).unwrap();
+    write_json(&folder.join("metadata.json"), &entry.metadata).unwrap();
+    fs::write(folder.join("body.html"), "<p>Quartz.</p>").unwrap();
+    let second = root.join("second");
+    build::run(&content, &second).unwrap();
+    let old_group = old_id.bytes().fold(0u32, |hash, value| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(value))
+    }) % 16;
+    let new_group = "native-new".bytes().fold(0u32, |hash, value| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(value))
+    }) % 16;
+    let mut unchanged = vec!["search/terms-6f-72.json".to_string()];
+    if old_group != new_group {
+        unchanged.push(format!("search/text-group-{old_group:x}.json"));
+    }
+    for path in unchanged {
+        assert_eq!(
+            fs::read(first.join("public").join(&path)).unwrap(),
+            fs::read(second.join("public").join(&path)).unwrap()
+        );
+    }
+    let descriptor: serde_json::Value =
+        serde_json::from_slice(&fs::read(second.join("public/search/index.json")).unwrap())
+            .unwrap();
+    assert_eq!(descriptor["schema_version"], 2);
+    for path in fs::read_dir(second.join("public/search")).unwrap() {
+        let path = path.unwrap().path();
+        if path.extension().and_then(|x| x.to_str()) == Some("json") {
+            let body = fs::read_to_string(path).unwrap();
+            assert!(!body.contains("PRIVATE BODY"));
+            assert!(!body.contains("SECRET DRAFT"));
+        }
+    }
+}
+
+#[test]
 fn home_shows_ten_article_excerpts_without_drafts_and_keeps_pagination() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

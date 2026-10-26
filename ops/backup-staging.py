@@ -27,6 +27,8 @@ UNITS = ['alexandria-admin-staging.service', 'alexandria-analytics.service',
 
 
 def run(*args, **kwargs):
+    if args and args[0] == 'restic':
+        kwargs.setdefault('env', dict(os.environ, GOGC='50', GOMAXPROCS='1'))
     return subprocess.run(args, check=True, **kwargs)
 
 
@@ -51,7 +53,7 @@ def copy_publisher(source, target):
     target.mkdir(parents=True, mode=0o700)
     for child in source.iterdir():
         destination = target / child.name
-        immutable = child.name in {'releases', 'snapshots'}
+        immutable = child.name in {'releases', 'snapshots', '.media-blobs'}
         if immutable:
             if child.is_symlink() or not child.is_dir():
                 raise RuntimeError('Unexpected immutable publisher directory')
@@ -64,6 +66,56 @@ def copy_publisher(source, target):
     shutil.copystat(source, target)
 
 
+def copy_admin_tree(source, target):
+    """Copy mutable state; library pixels are create-only and safe to link."""
+    target.mkdir(mode=0o700)
+    for child in source.iterdir():
+        if child.name == 'content' and child.is_dir() and not child.is_symlink():
+            copy_admin_tree(child, target / child.name)
+        elif source.name == 'content' and child.name == 'media':
+            if child.is_symlink() or not child.is_dir():
+                raise RuntimeError('Unsafe media store')
+            for item in child.rglob('*'):
+                if item.is_symlink() or item.suffix in {'.sqlite', '.sqlite-wal', '.sqlite-shm'}:
+                    raise RuntimeError('Unsafe immutable media file')
+            run('cp', '-al', '--', str(child), str(target / child.name))
+        else:
+            run('cp', '-a', '--', str(child), str(target / child.name))
+    shutil.copystat(source, target)
+
+
+def allocated_bytes(paths, excluded=()):
+    """Physical blocks once per inode; never follow symlinks or read secrets."""
+    from itertools import chain
+    seen = set()
+    total = 0
+    for root in paths:
+        if not root.exists() or root.is_symlink():
+            continue
+        for path in chain((root,),root.rglob('*')) if root.is_dir() else (root,):
+            if path.is_symlink() or any(path.is_relative_to(skip) for skip in excluded):
+                continue
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                continue
+            identity = (info.st_dev, info.st_ino)
+            if identity not in seen:
+                seen.add(identity)
+                total += info.st_blocks * 512
+    return total
+
+
+def space_budget(paths, immutable, repository):
+    source = allocated_bytes(paths)
+    mutable = allocated_bytes(paths, immutable)
+    rewrite = allocated_bytes([repository])
+    reserve = 256 * 1024**2
+    return {'required_bytes': source + mutable + rewrite + reserve,
+            'source_bytes': source, 'mutable_capture_bytes': mutable,
+            'repository_rewrite_bytes': rewrite, 'reserve_bytes': reserve}
+
+
 def capture_snapshot():
     if os.geteuid() != 0:
         raise SystemExit('Root required')
@@ -74,8 +126,12 @@ def capture_snapshot():
     if SNAPSHOT.exists():
         shutil.rmtree(SNAPSHOT)
     SNAPSHOT.mkdir(mode=0o700)
-    if shutil.disk_usage(BASE).free < 3 * 1024**3:
-        raise RuntimeError('At least 3 GiB free space required before snapshot')
+    budget=space_budget([Path(p) for p in PATHS],
+        [Path('/srv/alexandria/staging')/name for name in ['releases','snapshots','.media-blobs']]
+        +[Path('/var/lib/alexandria-admin-staging/content/media')],
+        Path(os.environ.get('RESTIC_REPOSITORY','/var/lib/alexandria-backup/repository')))
+    if shutil.disk_usage(BASE).free < budget['required_bytes']:
+        raise RuntimeError('Insufficient free space for capture, repository rewrite and reserve: '+str(budget['required_bytes']))
     units = ['alexandria-analytics.timer', 'alexandria-analytics.service',
              'alexandria-admin-staging.service']
     active = [u for u in units if subprocess.run(
@@ -83,6 +139,14 @@ def capture_snapshot():
     (BASE / 'paused-services.json').write_text(json.dumps(active))
     try:
         run('systemctl', 'stop', *units)
+        # Separate service bind mounts can force upload-time copy fallback.
+        # Compact outside that namespace while writers are stopped; never
+        # weaken the admin sandbox merely to permit cross-mount hardlinks.
+        import pwd
+        user=pwd.getpwuid(Path('/var/lib/alexandria-admin-staging/state').stat().st_uid).pw_name
+        run('runuser','-u',user,'--','/opt/alexandria/admin-staging/alexandria-engine',
+            'compact-media','--state','/var/lib/alexandria-admin-staging/state',
+            '--content','/var/lib/alexandria-admin-staging/content',stdout=subprocess.DEVNULL)
         # Stopping the admin does not stop an already running console publisher.
         with open('/srv/alexandria/staging/publish.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -96,6 +160,10 @@ def capture_snapshot():
                 if Path(source).exists():
                     if source == '/srv/alexandria/staging':
                         copy_publisher(Path(source), SNAPSHOT / source.lstrip('/'))
+                    elif source == '/var/lib/alexandria-admin-staging':
+                        target=SNAPSHOT / source.lstrip('/')
+                        target.parent.mkdir(parents=True,exist_ok=True)
+                        copy_admin_tree(Path(source),target)
                     else:
                         run('cp', '-a', '--parents', source, str(SNAPSHOT))
             # Record fresh host reconstruction requirements; no shadow/SSH keys.

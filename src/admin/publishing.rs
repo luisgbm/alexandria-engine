@@ -96,9 +96,38 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
     for name in ["site.json", "attachments.json", "url-baseline.json"] {
         fs::copy(source.join(name), target.join(name))?;
     }
-    for name in ["articles", "pages", "media"] {
+    for name in ["articles", "pages"] {
         if source.join(name).exists() {
             copy_tree(&source.join(name), &target.join(name), false)?;
+        }
+    }
+    if source.join("media").exists() {
+        let pool = target
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(".media-blobs");
+        shared_media_tree(&source.join("media"), &target.join("media"), &pool)?;
+    }
+    Ok(())
+}
+
+fn shared_media_tree(source: &Path, target: &Path, pool: &Path) -> Result<()> {
+    ensure!(
+        fs::symlink_metadata(source)?.is_dir(),
+        "unexpected media directory"
+    );
+    fs::create_dir_all(target)?;
+    fs::set_permissions(target, fs::Permissions::from_mode(0o700))?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            shared_media_tree(&entry.path(), &target.join(entry.file_name()), pool)?;
+        } else {
+            ensure!(kind.is_file(), "unexpected media file type");
+            crate::storage::media(&entry.path(), &target.join(entry.file_name()), Some(pool))?;
         }
     }
     Ok(())
@@ -118,7 +147,7 @@ fn tree_hash(root: &Path) -> Result<String> {
                         .strip_prefix(root)?
                         .to_string_lossy()
                         .into_owned(),
-                    format!("{:x}", Sha256::digest(fs::read(item.path())?)),
+                    crate::storage::file_hash(&item.path())?,
                 );
             }
         }
@@ -188,7 +217,151 @@ fn directory_bytes(path: &Path) -> Result<u64> {
     Ok(bytes)
 }
 
+fn unique_storage_bytes(paths: &[PathBuf]) -> Result<u64> {
+    fn visit(path: &Path, seen: &mut std::collections::BTreeSet<(u64, u64)>) -> Result<u64> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(value) => value,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e.into()),
+        };
+        if metadata.is_symlink() || !seen.insert((metadata.dev(), metadata.ino())) {
+            return Ok(0);
+        }
+        let mut bytes = metadata.blocks() * 512;
+        if metadata.is_dir() {
+            for child in fs::read_dir(path)? {
+                bytes += visit(&child?.path(), seen)?;
+            }
+        }
+        Ok(bytes)
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut bytes = 0;
+    for path in paths {
+        bytes += visit(path, &mut seen)?;
+    }
+    Ok(bytes)
+}
+
+/// Filesystem-user maintenance: no auth state or editable source is modified.
+pub(super) fn compact_media(state: &Path, content: Option<&Path>) -> Result<serde_json::Value> {
+    let publisher = Publisher::open(state)?.context("publisher not configured")?;
+    let _lock = publisher.lock()?;
+    let mut roots = vec![
+        publisher.root.join("releases"),
+        publisher.root.join("snapshots"),
+        publisher.root.join(".media-blobs"),
+    ];
+    if let Some(content) = content {
+        roots.push(content.join("media"));
+    }
+    let before = unique_storage_bytes(&roots)?;
+    let pool = publisher.root.join(".media-blobs");
+    let active = publisher.active()?;
+    let mut changed = 0;
+    for record in fs::read_dir(publisher.root.join("history"))? {
+        let path = record?.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let release: Release = read_json(&path)?;
+        validate_id(&release.id)?;
+        let snapshot = publisher.root.join("snapshots").join(&release.id);
+        let public = publisher
+            .root
+            .join("releases")
+            .join(&release.id)
+            .join("public");
+        if !snapshot.exists() || !public.exists() {
+            continue;
+        }
+        ensure!(
+            tree_hash(&public)? == release.tree_hash,
+            "release integrity mismatch"
+        );
+        let snapshot_hash = tree_hash(&snapshot)?;
+        fn visit(
+            dir: &Path,
+            media: &Path,
+            public: &Path,
+            pool: &Path,
+            changed: &mut u64,
+        ) -> Result<()> {
+            for item in fs::read_dir(dir)? {
+                let item = item?;
+                let path = item.path();
+                let kind = item.file_type()?;
+                if kind.is_dir() {
+                    visit(&path, media, public, pool, changed)?;
+                } else {
+                    ensure!(kind.is_file(), "unsafe media entry");
+                    crate::storage::media(&path, &path, Some(pool))?;
+                    let target = public.join(path.strip_prefix(media)?);
+                    if target.exists() {
+                        ensure!(
+                            crate::storage::file_hash(&target)?
+                                == crate::storage::file_hash(&path)?,
+                            "snapshot/public media differ"
+                        );
+                        crate::storage::media(&path, &target, Some(pool))?;
+                    }
+                    *changed += 1;
+                }
+            }
+            Ok(())
+        }
+        if snapshot.join("media").exists() {
+            visit(
+                &snapshot.join("media"),
+                &snapshot.join("media"),
+                &public,
+                &pool,
+                &mut changed,
+            )?;
+        }
+        ensure!(
+            tree_hash(&snapshot)? == snapshot_hash && tree_hash(&public)? == release.tree_hash,
+            "compaction changed bytes"
+        );
+    }
+    let mut working_shared = 0;
+    fn working(dir: &Path, content: &Path, pool: &Path, count: &mut u64) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                working(&entry.path(), content, pool, count)?;
+            } else {
+                ensure!(kind.is_file(), "unsafe working media");
+                if crate::storage::share_working_media(content, &entry.path(), pool)? {
+                    *count += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+    if let Some(content) = content
+        && content.join("media").exists()
+    {
+        working(&content.join("media"), content, &pool, &mut working_shared)?;
+    }
+    crate::storage::gc(&pool)?;
+    ensure!(publisher.active()? == active, "active release changed");
+    let after = unique_storage_bytes(&roots)?;
+    Ok(
+        serde_json::json!({"active":active,"media_processed":changed,"working_media_shared":working_shared,"before_bytes":before,"after_bytes":after,"reclaimed_bytes":before.saturating_sub(after)}),
+    )
+}
+
 impl Publisher {
+    pub(super) fn share_upload(&self, content: &Path, path: &Path) -> Result<()> {
+        crate::storage::share_working_media(content, path, &self.root.join(".media-blobs"))?;
+        Ok(())
+    }
+    pub(super) fn gc_media(&self) -> Result<()> {
+        crate::storage::gc(&self.root.join(".media-blobs"))?;
+        Ok(())
+    }
     fn backup_coverage(&self) -> Result<Option<BackupCoverage>> {
         let directory = self.root.join("backup-verification");
         let path = directory.join("coverage.json");
@@ -274,7 +447,8 @@ impl Publisher {
             let _ = fs::remove_dir(&pending);
             return Err(anyhow::Error::from(error).into());
         }
-        let cleanup_pending = fs::remove_dir_all(&pending).is_err();
+        let cleanup_pending = fs::remove_dir_all(&pending).is_err()
+            || crate::storage::gc(&self.root.join(".media-blobs")).is_err();
         let audit_pending = self
             .event(&Event {
                 id: Uuid::new_v4().simple().to_string(),
@@ -604,11 +778,19 @@ impl Publisher {
                 let source_file = media_file(source, &path)?;
                 let target = content.join("media").join(relative_path(&path)?);
                 fs::create_dir_all(target.parent().unwrap())?;
-                fs::copy(source_file, &target)?;
+                crate::storage::media(
+                    &source_file,
+                    &target,
+                    Some(&self.root.join(".media-blobs")),
+                )?;
                 fs::File::open(target)?.sync_all()?;
             }
             let output = self.root.join("releases").join(&id);
-            crate::build::run(&content, &output)?;
+            crate::build::run_with_media_pool(
+                &content,
+                &output,
+                Some(&self.root.join(".media-blobs")),
+            )?;
             // Nginx maps are root-owned. Reject any release that would require a map reload.
             for name in ["redirects.map.conf", "server.inc.conf"] {
                 ensure!(
@@ -624,6 +806,13 @@ impl Publisher {
                 );
             }
             public_permissions(&output.join("public"))?;
+            // Text is mutable only while building. Once validated, unchanged
+            // HTML/JSON/assets can safely share the prior version's inodes.
+            crate::storage::share_unchanged(
+                &content,
+                &self.root.join("snapshots").join(&previous),
+            )?;
+            crate::storage::share_unchanged(&output, &self.root.join("releases").join(&previous))?;
             fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
             let release = Release {
                 id: id.clone(),
@@ -1035,7 +1224,12 @@ pub(super) async fn history(
     } else {
         None
     };
-    let storage = serde_json::json!({"retained_count":retained_count,"archived_count":rows.len()-retained_count,"release_bytes":release_bytes,"snapshot_bytes":snapshot_bytes,"total_bytes":release_bytes+snapshot_bytes,"keep_previous":5,"retention":retention});
+    let allocated = unique_storage_bytes(&[
+        p.root.join("releases"),
+        p.root.join("snapshots"),
+        p.root.join(".media-blobs"),
+    ])?;
+    let storage = serde_json::json!({"retained_count":retained_count,"archived_count":rows.len()-retained_count,"release_bytes":release_bytes,"snapshot_bytes":snapshot_bytes,"logical_bytes":release_bytes+snapshot_bytes,"total_bytes":allocated,"keep_previous":5,"retention":retention});
     let mut events = Vec::new();
     for file in fs::read_dir(p.root.join("events")).map_err(anyhow::Error::from)? {
         let path = file.map_err(anyhow::Error::from)?.path();
@@ -1202,6 +1396,65 @@ pub(super) async fn rollback(
 #[cfg(test)]
 mod publishing_tests {
     use super::*;
+    #[test]
+    fn compaction_reclaims_duplicate_bytes_and_preserves_content_and_hashes() {
+        let (temp, p, content, _) = setup();
+        let working = content.join("media/image.jpg");
+        let snapshot = p.root.join("snapshots/baseline/media/image.jpg");
+        let public = p.root.join("releases/baseline/public/image.jpg");
+        fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        fs::write(&working, vec![42u8; 1024 * 1024]).unwrap();
+        fs::set_permissions(&working, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::copy(&working, &snapshot).unwrap();
+        fs::copy(&working, &public).unwrap();
+        let record_path = p.root.join("history/baseline.json");
+        let mut record: Release = read_json(&record_path).unwrap();
+        record.tree_hash = tree_hash(&p.root.join("current")).unwrap();
+        durable_json(&record_path, &record).unwrap();
+        let snapshot_hash = tree_hash(&p.root.join("snapshots/baseline")).unwrap();
+        let state = temp.path().join("compact-state");
+        fs::create_dir(&state).unwrap();
+        durable_json(&state.join("publishing.json"), &p).unwrap();
+        let report = compact_media(&state, None).unwrap();
+        assert!(report["reclaimed_bytes"].as_u64().unwrap() > 900 * 1024);
+        assert_eq!(
+            snapshot.metadata().unwrap().ino(),
+            public.metadata().unwrap().ino()
+        );
+        assert_ne!(
+            working.metadata().unwrap().ino(),
+            public.metadata().unwrap().ino()
+        );
+        assert_eq!(
+            tree_hash(&p.root.join("snapshots/baseline")).unwrap(),
+            snapshot_hash
+        );
+        assert_eq!(
+            tree_hash(&p.root.join("current")).unwrap(),
+            record.tree_hash
+        );
+        assert_eq!(working.metadata().unwrap().mode() & 0o777, 0o600);
+        assert_eq!(compact_media(&state, None).unwrap()["reclaimed_bytes"], 0);
+        let active = p
+            .deploy(
+                &content,
+                &Store::open(content.clone()).unwrap().entries["wp-1"],
+                "baseline",
+                "test",
+            )
+            .unwrap();
+        assert_eq!(
+            public.metadata().unwrap().ino(),
+            p.root
+                .join("releases")
+                .join(&active)
+                .join("public/image.jpg")
+                .metadata()
+                .unwrap()
+                .ino()
+        );
+        p.rollback_to("baseline", &active, "test").unwrap();
+    }
     #[test]
     fn unsaved_imported_content_uses_current_public_snapshot_not_stale_source() {
         let (_temp, p, content, _doc) = setup();

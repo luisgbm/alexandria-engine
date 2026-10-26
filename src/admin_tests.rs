@@ -2285,3 +2285,28 @@ async fn publication_delete_requires_authenticated_csrf_session() {
         StatusCode::FORBIDDEN
     );
 }
+#[test]
+fn image_encoding_limit_is_enforced_before_allocating_oversized_output() {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut output = BoundedImageOutput {
+        inner: Cursor::new(Vec::new()),
+        limit: 16,
+    };
+    output.write_all(b"small").unwrap();
+    assert!(output.write_all(&[0; 32]).is_err());
+    assert_eq!(output.inner.get_ref().len(), 5);
+    assert!(output.seek(SeekFrom::Start(17)).is_err());
+    assert!(output.seek(SeekFrom::Current(-6)).is_err());
+    output.seek(SeekFrom::Start(16)).unwrap();
+    assert!(output.write_all(b"x").is_err());
+}
+
+#[test]
+fn heavy_upload_and_publish_jobs_share_a_single_admission_slot() {
+    let (_temp, app) = fixture();
+    assert!(Arc::ptr_eq(&app.upload_slots, &app.publish_slots));
+    let permit = app.upload_slots.clone().try_acquire_owned().unwrap();
+    assert!(app.publish_slots.clone().try_acquire_owned().is_err());
+    drop(permit);
+    assert!(app.publish_slots.clone().try_acquire_owned().is_ok());
+}

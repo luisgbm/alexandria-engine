@@ -539,7 +539,12 @@ pub(super) async fn purge(
             .unwrap_or(false);
     data.get_mut(&input.path).unwrap().purged = true;
     save(&store.root, &data)?;
-    let cleanup_pending = !retained && fs::remove_file(&file).is_err();
+    let mut cleanup_pending = !retained && fs::remove_file(&file).is_err();
+    if let Some(publisher) = &app.publisher
+        && publisher.gc_media().is_err()
+    {
+        cleanup_pending = true;
+    }
     if let Err(error) = audit(&app.db.lock().unwrap(), "library_image_purged", &input.path) {
         eprintln!("image purge audit failed: {error:#}");
     }
