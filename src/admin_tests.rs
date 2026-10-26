@@ -2252,3 +2252,36 @@ fn publication_comparison_ignores_bookkeeping_but_includes_article_metadata() {
         );
     }
 }
+
+#[tokio::test]
+async fn publication_delete_requires_authenticated_csrf_session() {
+    let (_temp, app) = fixture();
+    let (cookie, _csrf) = authenticated(&app);
+    let payload = serde_json::json!({"release":"old","expected_active":"current"});
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/deployments/delete",
+            None,
+            None,
+            payload.clone()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/api/deployments/delete",
+            Some(&cookie),
+            None,
+            payload
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+}

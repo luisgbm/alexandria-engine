@@ -48,6 +48,15 @@ class RetentionTests(unittest.TestCase):
                         for p in self.root.rglob('*') if p.is_file()}
         self.receipt = {'snapshot_id': 'a' * 64, 'verified_at': datetime.now(timezone.utc).isoformat()}
 
+    def test_manual_coverage_contains_only_complete_backed_up_pairs(self):
+        catalog=retention.coverage_catalog(self.root,self.entries,self.receipt)
+        self.assertEqual(len(catalog['releases']),8)
+        self.assertEqual(catalog['publisher_root'],str(self.root))
+        expected=hashlib.sha256(json.dumps({'site.json':hashlib.sha256(b'r1').hexdigest()},separators=(',',':')).encode()).hexdigest()
+        self.assertEqual(catalog['releases']['r1']['snapshot_hash'],expected)
+        self.entries.pop((self.root/'snapshots/r1/site.json').as_posix().lstrip('/'))
+        self.assertNotIn('r1',retention.coverage_catalog(self.root,self.entries,self.receipt)['releases'])
+
     def test_active_older_release_and_five_newest_rollback_pairs_survive(self):
         report = retention.prune(self.root, self.entries, self.receipt, apply=True)
         self.assertEqual(set(report['retained_ids']), {'r0', 'r3', 'r4', 'r5', 'r6', 'r7'})

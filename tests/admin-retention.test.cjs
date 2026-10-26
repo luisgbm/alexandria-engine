@@ -9,3 +9,15 @@ test('publications show local disk usage and never offer archived rollback targe
  assert.match(get('publication-storage').textContent,/2 versões locais/);assert.match(get('publication-storage').textContent,/Total: 2 GiB/);assert.match(get('retention-policy').textContent,/1 registros antigos/);
  assert.ok(get('release-list').children.every(item=>!item.textContent.includes('archived')));
 });
+test('publication deletion uses Yes/No, captures expected active version, and prevents duplicate requests',async()=>{
+ const nodes={};const get=id=>nodes[id]??={disabled:false,showModal(){this.open=true;},close(){this.open=false;}};let calls=0,resolveApi,refreshed=0,payload;
+ const ctx=vm.createContext({$:get,dirty:false,deployment:{active:'shown'},notice(){},withPublishProgress:async(_,action)=>action(),api:async(path,options)=>{calls++;assert.equal(path,'/api/deployments/delete');payload=JSON.parse(options.body);return new Promise(resolve=>resolveApi=resolve);},refreshAfterSuccess:async()=>{refreshed++;},loadDeployments(){}});
+ vm.runInContext(source.slice(source.indexOf('  let publicationDeleteTarget='),source.indexOf('  $("publish").onclick')),ctx);
+ ctx.openPublicationDelete({id:'older'});get('cancel-delete-publication').onclick();assert.equal(calls,0);assert.equal(get('delete-publication-dialog').open,false);
+ ctx.openPublicationDelete({id:'older'});ctx.deployment.active='changed';
+ const pending=get('delete-publication-form').onsubmit({preventDefault(){}});await get('delete-publication-form').onsubmit({preventDefault(){}});
+ assert.equal(calls,1);assert.deepEqual(payload,{release:'older',expected_active:'shown'});resolveApi({});await pending;
+ assert.equal(refreshed,1);assert.equal(get('delete-publication-dialog').open,false);
+ ctx.openPublicationDelete({id:'older'});ctx.api=async()=>{throw Error('Backup required');};await get('delete-publication-form').onsubmit({preventDefault(){}});
+ assert.equal(get('delete-publication-dialog').open,true);assert.equal(get('delete-publication-status').textContent,'Backup required');assert.equal(get('confirm-delete-publication').disabled,false);
+});

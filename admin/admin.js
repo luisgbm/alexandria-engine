@@ -338,13 +338,37 @@
 
         await refreshAfterSuccess(`Versão anterior restaurada em ${environmentLabel}.`, async()=>{await loadDeployments();await refreshEntries();if(doc)await selectEntry(doc.metadata.id);});
 
-      });li.append(button);}$("release-list").append(li);
+      });li.append(button);
+        const remove=document.createElement("button");remove.type="button";remove.className="quiet publication-delete";remove.textContent="Excluir versão";
+        remove.disabled=!release.backup_verified;remove.title=release.backup_verified?"Excluir esta versão local":"Faça e verifique um backup no PC antes de excluir esta versão";
+        remove.onclick=()=>openPublicationDelete(release);li.append(remove);
+        if(!release.backup_verified){const hint=document.createElement("small");hint.textContent=" · Exclusão aguardando backup verificado no PC";li.append(hint);}
+      }$("release-list").append(li);
 
     }
 
     const latest=deployment.events[0];$("deployment-result").textContent=latest ? `Última operação: ${latest.action} · ${latest.result}` : "Nenhuma publicação nova.";
 
   }
+
+  let publicationDeleteTarget=null;
+  function openPublicationDelete(release){
+    if(dirty){notice("Salve ou descarte as alterações antes de excluir uma publicação.",true);return;}
+    publicationDeleteTarget={release:release.id,expected_active:deployment.active};
+    $("delete-publication-name").textContent=release.id;$("delete-publication-status").textContent="";
+    $("confirm-delete-publication").disabled=false;$("delete-publication-dialog").showModal();
+  }
+  $("cancel-delete-publication").onclick=()=>$("delete-publication-dialog").close();
+  $("delete-publication-form").onsubmit=async event=>{
+    event.preventDefault();if(!publicationDeleteTarget||$("confirm-delete-publication").disabled)return;
+    $("confirm-delete-publication").disabled=true;$("cancel-delete-publication").disabled=true;
+    try{
+      const result=await withPublishProgress("Verificando o backup e excluindo a versão anterior…",()=>api("/api/deployments/delete",{method:"POST",body:JSON.stringify(publicationDeleteTarget)}));
+      $("delete-publication-dialog").close();
+      await refreshAfterSuccess(result.cleanup_pending||result.audit_pending?"Versão retirada do rollback local. A manutenção precisa de revisão pelo operador.":"Publicação anterior excluída. A versão ativa foi preservada.",loadDeployments);
+    }catch(error){$("delete-publication-status").textContent=error.message;}
+    finally{$("confirm-delete-publication").disabled=false;$("cancel-delete-publication").disabled=false;}
+  };
 
   $("publish").onclick=()=>busy($("publish"),async()=>{
 

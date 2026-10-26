@@ -63,6 +63,45 @@ def inventory_tree(folder, root, entries):
     return size
 
 
+def coverage_catalog(root, entries, receipt):
+    prefix = root.as_posix().lstrip('/') + '/'
+    releases = {}
+    for key, record in entries.items():
+        if not key.startswith(prefix + 'history/') or not key.endswith('.json'):
+            continue
+        identity = key.removeprefix(prefix + 'history/').removesuffix('.json')
+        identifier(identity)
+        hashes = {}
+        for name in ['releases', 'snapshots']:
+            start = prefix + name + '/' + identity + '/'
+            files = {path.removeprefix(start): row['sha256'] for path, row in entries.items()
+                     if path.startswith(start) and 'sha256' in row}
+            if not files:
+                break
+            hashes['release_hash' if name == 'releases' else 'snapshot_hash'] = hashlib.sha256(
+                json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        if len(hashes) == 2:
+            releases[identity] = dict(hashes, record_hash=record['sha256'])
+    return {'schema_version': 1, 'publisher_root': str(root), 'snapshot_id': receipt['snapshot_id'],
+            'verified_at': receipt['verified_at'], 'releases': releases}
+
+
+def store_coverage(root, catalog):
+    directory = root / 'backup-verification'
+    if not directory.exists():
+        directory.mkdir(mode=0o711)
+    require(not directory.is_symlink() and directory.stat().st_uid == 0
+            and directory.stat().st_mode & 0o022 == 0, 'Unsafe backup verification directory')
+    directory.chmod(0o711)
+    with tempfile.NamedTemporaryFile(mode='w', dir=directory, prefix='.coverage-', delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(json.dumps(catalog, indent=2) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+        os.fchmod(stream.fileno(), 0o644)
+    temporary.replace(directory / 'coverage.json')
+
+
 def prune(root, entries, receipt, keep_previous=5, apply=False):
     require(root.is_absolute() and root.resolve() == root and not root.is_symlink(), 'Canonical publisher root required')
     require(1 <= keep_previous <= 50, 'Keep between one and fifty rollback releases')
@@ -131,6 +170,7 @@ def main():
     parser.add_argument('--backup-lock', type=Path, default=Path('/var/cache/alexandria-backup/run.lock'))
     parser.add_argument('--keep-previous', type=int, default=5)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--record-coverage-only', action='store_true')
     args = parser.parse_args()
     require(os.geteuid() == 0, 'Root required')
     os.umask(0o077)
@@ -143,7 +183,12 @@ def main():
         body = subprocess.check_output(['restic', '--repo', str(args.repo), '--password-file', str(args.password_file),
                                        'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/manifest.json'])
         entries = verified_manifest(receipt, body)
-        print(json.dumps(prune(args.root, entries, receipt, args.keep_previous, args.apply), indent=2))
+        catalog = coverage_catalog(args.root, entries, receipt)
+        store_coverage(args.root, catalog)
+        report = ({'coverage_recorded': True, 'covered_releases': len(catalog['releases']),
+                   'backup_snapshot': receipt['snapshot_id']} if args.record_coverage_only else
+                  prune(args.root, entries, receipt, args.keep_previous, args.apply))
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == '__main__':

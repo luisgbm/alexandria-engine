@@ -841,6 +841,7 @@ fn router(app: Shared) -> Router {
         .route("/api/media/{*path}", get(media))
         .route("/api/analytics", get(analytics_report))
         .route("/api/deployments", get(publishing::history))
+        .route("/api/deployments/delete", post(publishing::delete_release))
         .route("/api/publish/{id}", post(publishing::publish))
         .route("/api/rollback", post(publishing::rollback))
         .route("/api/preview", post(preview))

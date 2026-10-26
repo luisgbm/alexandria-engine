@@ -39,3 +39,5 @@ body{padding-bottom:env(safe-area-inset-bottom,0px)}
 .security-controls{padding:0;margin:0}
 
 .image-library-menu{max-width:24rem}.image-library-search{max-width:36rem}#purge-image-references{padding-left:1.2rem}#purge-image-references li{margin:.8rem 0;overflow-wrap:anywhere}#purge-image-references strong,#purge-image-references span{display:block}#purge-image-references span{font-size:.85rem;color:var(--muted)}
+
+.publication-delete{color:#8a2929}#delete-publication-dialog{width:min(95vw,38rem);max-height:90vh;overflow:auto}#delete-publication-name{overflow-wrap:anywhere}#confirm-delete-publication{background:#8a2929;border-color:#8a2929;color:#fff}

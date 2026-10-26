@@ -20,6 +20,19 @@ struct Release {
     parent: Option<String>,
     tree_hash: String,
 }
+#[derive(Clone, Deserialize)]
+struct BackedUpRelease {
+    release_hash: String,
+    snapshot_hash: String,
+    record_hash: String,
+}
+#[derive(Deserialize)]
+struct BackupCoverage {
+    schema_version: u32,
+    publisher_root: PathBuf,
+    snapshot_id: String,
+    releases: BTreeMap<String, BackedUpRelease>,
+}
 #[derive(Serialize, Deserialize)]
 struct Event {
     id: String,
@@ -176,6 +189,108 @@ fn directory_bytes(path: &Path) -> Result<u64> {
 }
 
 impl Publisher {
+    fn backup_coverage(&self) -> Result<Option<BackupCoverage>> {
+        let directory = self.root.join("backup-verification");
+        let path = directory.join("coverage.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        for candidate in [&directory, &path] {
+            let metadata = fs::symlink_metadata(candidate)?;
+            ensure!(
+                !metadata.file_type().is_symlink()
+                    && metadata.uid() == 0
+                    && metadata.mode() & 0o022 == 0,
+                "untrusted backup verification file"
+            );
+        }
+        let coverage: BackupCoverage = read_json(&path)?;
+        ensure!(
+            coverage.schema_version == 1
+                && coverage.publisher_root == self.root
+                && coverage.snapshot_id.len() == 64
+                && coverage.snapshot_id.bytes().all(|c| c.is_ascii_hexdigit()),
+            "backup verification does not match publisher"
+        );
+        Ok(Some(coverage))
+    }
+    fn delete_backed_up_release(
+        &self,
+        target: &str,
+        expected: &str,
+        proof: &BackedUpRelease,
+        backup: &str,
+    ) -> ApiResult<serde_json::Value> {
+        validate_id(target).map_err(|_| bad("Publicação inválida."))?;
+        let _lock = self.lock().map_err(|_| {
+            ApiError(
+                StatusCode::CONFLICT,
+                "Aguarde a operação atual terminar e tente novamente.".into(),
+            )
+        })?;
+        let active = self.active()?;
+        if active != expected {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "A versão ativa mudou. Atualize as publicações.".into(),
+            ));
+        }
+        if target == active {
+            return Err(bad("A publicação ativa não pode ser excluída."));
+        }
+        self.release(target)?;
+        let release = self.root.join("releases").join(target);
+        let snapshot = self.root.join("snapshots").join(target);
+        for path in [&release, &snapshot] {
+            if !path.is_dir() || path.is_symlink() {
+                return Err(bad("Esta versão não está disponível para exclusão local."));
+            }
+            if fs::canonicalize(path).map_err(anyhow::Error::from)? != *path {
+                return Err(bad("Caminho de publicação inválido."));
+            }
+        }
+        let record = self.root.join("history").join(format!("{target}.json"));
+        let record_hash = format!(
+            "{:x}",
+            Sha256::digest(fs::read(record).map_err(anyhow::Error::from)?)
+        );
+        if record_hash != proof.record_hash
+            || tree_hash(&release)? != proof.release_hash
+            || tree_hash(&snapshot)? != proof.snapshot_hash
+        {
+            return Err(ApiError(StatusCode::CONFLICT,"Esta versão não corresponde ao backup verificado. Faça e verifique um novo backup no PC.".into()));
+        }
+        let pending = self
+            .root
+            .join(format!(".delete-publication-{}", Uuid::new_v4().simple()));
+        fs::create_dir(&pending).map_err(anyhow::Error::from)?;
+        fs::set_permissions(&pending, fs::Permissions::from_mode(0o700))
+            .map_err(anyhow::Error::from)?;
+        fs::rename(&release, pending.join("release")).map_err(anyhow::Error::from)?;
+        if let Err(error) = fs::rename(&snapshot, pending.join("snapshot")) {
+            if let Err(rollback_error) = fs::rename(pending.join("release"), &release) {
+                eprintln!("publication delete staging rollback failed: {rollback_error}");
+            }
+            let _ = fs::remove_dir(&pending);
+            return Err(anyhow::Error::from(error).into());
+        }
+        let cleanup_pending = fs::remove_dir_all(&pending).is_err();
+        let audit_pending = self
+            .event(&Event {
+                id: Uuid::new_v4().simple().to_string(),
+                time: now(),
+                actor: "owner-passkey-session".into(),
+                action: "delete".into(),
+                target: target.into(),
+                previous: active,
+                result: "deleted".into(),
+                detail: format!("verified_backup={backup}; cleanup_pending={cleanup_pending}"),
+            })
+            .is_err();
+        Ok(
+            serde_json::json!({"deleted":true,"cleanup_pending":cleanup_pending,"audit_pending":audit_pending}),
+        )
+    }
     fn release_storage(&self, release: &Release) -> Result<serde_json::Value> {
         validate_id(&release.id)?;
         let site = self.root.join("releases").join(&release.id);
@@ -894,10 +1009,18 @@ pub(super) async fn history(
             .cmp(&a.created_at)
             .then_with(|| b.id.cmp(&a.id))
     });
-    let rows = releases
+    let coverage = p.backup_coverage().ok().flatten();
+    let mut rows = releases
         .iter()
         .map(|release| p.release_storage(release))
         .collect::<Result<Vec<_>>>()?;
+    for row in &mut rows {
+        row["backup_verified"] = serde_json::json!(coverage.as_ref().is_some_and(|catalog| {
+            row["id"]
+                .as_str()
+                .is_some_and(|id| catalog.releases.contains_key(id))
+        }));
+    }
     let retained_count = rows.iter().filter(|row| row["retained"] == true).count();
     let release_bytes: u64 = rows
         .iter()
@@ -927,6 +1050,40 @@ pub(super) async fn history(
     Ok(Json(
         serde_json::json!({"enabled":true,"active":p.active()?,"public_url":p.public_url,"releases":rows,"events":events,"storage":storage}),
     ))
+}
+pub(super) async fn delete_release(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(input): Json<RollbackInput>,
+) -> ApiResult<Json<serde_json::Value>> {
+    app.session(&headers, true)?;
+    let publisher = configured(&app)?;
+    let guard = app.publish_slots.clone().try_acquire_owned().map_err(|_| {
+        ApiError(
+            StatusCode::CONFLICT,
+            "Aguarde a publicação atual terminar.".into(),
+        )
+    })?;
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        let coverage = publisher
+            .backup_coverage()
+            .map_err(|_| bad("Não foi possível confirmar o backup desta versão."))?
+            .ok_or_else(|| bad("Faça e verifique um backup no PC antes de excluir publicações."))?;
+        let proof = coverage
+            .releases
+            .get(&input.release)
+            .ok_or_else(|| bad("Esta versão ainda não tem backup verificado no PC."))?;
+        publisher.delete_backed_up_release(
+            &input.release,
+            &input.expected_active,
+            proof,
+            &coverage.snapshot_id,
+        )
+    })
+    .await
+    .map_err(anyhow::Error::from)??;
+    Ok(Json(result))
 }
 pub(super) async fn publish(
     State(app): State<Shared>,
@@ -1061,6 +1218,69 @@ mod publishing_tests {
             "<p>Current cleaned public content</p>"
         );
         assert!(!store.entries["wp-1"].has_saved_draft);
+    }
+    #[test]
+    fn manual_deletion_protects_active_stale_and_changed_versions_and_preserves_working_content() {
+        let (_temp, p, content, doc) = setup();
+        let active = p.deploy(&content, &doc, "baseline", "test").unwrap();
+        let proof = BackedUpRelease {
+            release_hash: tree_hash(&p.root.join("releases/baseline")).unwrap(),
+            snapshot_hash: tree_hash(&p.root.join("snapshots/baseline")).unwrap(),
+            record_hash: format!(
+                "{:x}",
+                Sha256::digest(fs::read(p.root.join("history/baseline.json")).unwrap())
+            ),
+        };
+        assert!(
+            p.delete_backed_up_release(&active, &active, &proof, "verified")
+                .is_err()
+        );
+        assert!(
+            p.delete_backed_up_release("../outside", &active, &proof, "verified")
+                .is_err()
+        );
+        assert!(
+            p.delete_backed_up_release("baseline", "stale", &proof, "verified")
+                .is_err()
+        );
+        let body = p.root.join("snapshots/baseline/articles/wp-1/body.html");
+        let original = fs::read(&body).unwrap();
+        fs::write(&body, "changed after backup").unwrap();
+        assert!(
+            p.delete_backed_up_release("baseline", &active, &proof, "verified")
+                .is_err()
+        );
+        assert!(p.root.join("releases/baseline/public").is_dir());
+        fs::write(body, original).unwrap();
+        let working = fs::read(content.join("articles/wp-1/body.html")).unwrap();
+        let result = p
+            .delete_backed_up_release("baseline", &active, &proof, "verified")
+            .unwrap_or_else(|_| panic!("verified previous release should delete"));
+        assert_eq!(result["deleted"], true);
+        assert_eq!(result["cleanup_pending"], false);
+        assert_eq!(p.active().unwrap(), active);
+        assert!(!p.root.join("releases/baseline").exists());
+        assert!(!p.root.join("snapshots/baseline").exists());
+        assert!(p.root.join("history/baseline.json").is_file());
+        assert_eq!(
+            fs::read(content.join("articles/wp-1/body.html")).unwrap(),
+            working
+        );
+        assert!(
+            fs::read_dir(p.root.join("events"))
+                .unwrap()
+                .any(
+                    |entry| read_json::<Event>(&entry.unwrap().path()).unwrap().action == "delete"
+                )
+        );
+    }
+    #[test]
+    fn backup_coverage_is_optional_and_rejects_symlinked_proof() {
+        let (_temp, p, _content, _doc) = setup();
+        assert!(p.backup_coverage().unwrap().is_none());
+        symlink(p.root.join("history"), p.root.join("backup-verification")).unwrap();
+        fs::write(p.root.join("history/coverage.json"), "{}").unwrap();
+        assert!(p.backup_coverage().is_err());
     }
     #[test]
     fn publication_storage_reports_local_pairs_and_preserves_archived_metadata() {

@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--password-file', type=Path, required=True)
     parser.add_argument('--ssh-host', default='alexandria')
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--record-coverage-only', action='store_true')
     args = parser.parse_args()
     if not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._-]*', args.ssh_host):
         raise ValueError('Invalid SSH alias')
@@ -35,7 +36,7 @@ def main():
                '--root /srv/alexandria/staging --repo /var/lib/alexandria-backup/repository '
                '--password-file /etc/alexandria-backup/password '
                '--capture-root /var/cache/alexandria-backup/snapshot --keep-previous 5'
-               + (' --apply' if args.apply else '') + "'")
+               + (' --apply' if args.apply else '') + (' --record-coverage-only' if args.record_coverage_only else '') + "'")
     result = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
                              '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
                              args.ssh_host, command], input=json.dumps(receipt),
@@ -43,7 +44,7 @@ def main():
     if result.returncode:
         raise RuntimeError('History pruning failed; PC backup remains verified. ' + result.stderr.strip())
     report = json.loads(result.stdout)
-    (args.backup_root / 'retention-last-success.json').write_text(json.dumps(report, indent=2) + '\n')
+    (args.backup_root / ('coverage-last-success.json' if args.record_coverage_only else 'retention-last-success.json')).write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
 
 
