@@ -18,5 +18,6 @@ Build into a fresh directory and validate output. Compare every known URL with a
 expected status/target, inspect representative pages on desktop/mobile, and record
 all intentional retirements. A preview server does not reproduce Nginx redirect
 and status behavior. Publish only the reviewed content revision; unrelated private
-drafts stay private. See [URL inventory](migration-inventory.md) and
-[link review](broken-links-review.md).
+drafts stay private. Review broken references individually and record accepted
+corrections or intentional missing paths in the private URL inventory. See the
+[URL inventory guide](migration-inventory.md).
