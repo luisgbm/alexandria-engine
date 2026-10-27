@@ -48,15 +48,19 @@ change these fields in the existing JSON object:
 ```json
 {
   "title": "My publication",
-  "base_url": "https://www.example.org"
+  "base_url": "https://www.example.org",
+  "timezone": "UTC",
+  "article_path_prefix": "/articles/"
 }
 ```
 
 The starter includes the rest of the required metadata, an editor and a default
 article category. It contains no articles or WordPress data. You can create
-articles and pages in the admin after installation. New articles currently use
-the `/artigos/` URL prefix; page addresses start at `/`. Category names and
-navigation are configured separately in `site.json`.
+articles and pages in the admin after installation. Set `article_path_prefix` in
+`site.json` to choose the prefix for new article addresses (the starter uses
+`/articles/`; omitted settings retain `/artigos/` for compatibility). Page addresses
+start at `/`. Existing published URLs are preserved. Category names, timezone and
+navigation are configured in the same file.
 
 Build a local static release to inspect the output:
 

@@ -17,7 +17,8 @@ plus a button inserting `<!--more-->` at the cursor. This marker determines the
 homepage preview cutoff. Live preview is sandboxed. Saving a draft is private;
 publishing is a separate action with a centered progress dialog.
 
-New article titles generate `/artigos/<slug>/` addresses. Collisions receive a
+New article titles generate `<article_path_prefix><slug>/` addresses. Configure
+that prefix in `site.json`; omission preserves the `/artigos/` compatibility default. Collisions receive a
 random suffix; editors may edit an unpublished address. Published addresses are
 protected against silent changes. See [editorial workflow](editorial-workflow.md).
 
@@ -57,3 +58,9 @@ emitted. The footer includes a compact GitHub link to Alexandria Engine.
 Segurança lists passkeys and supports adding and removing them with confirmation.
 Deleting the last passkey is blocked. Lost access uses the root-console recovery
 procedure, not an unauthenticated reset endpoint.
+
+Set the prefix and timezone before installing a new publication. For an existing
+store, its private staged catalog may override the original `site.json`; review
+both stores with a backup before changing configuration. Prefix changes affect
+new suggestions, never rewrite established published addresses. New articles
+select the first configured category; editors can choose another before saving.

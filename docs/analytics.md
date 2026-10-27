@@ -19,3 +19,9 @@ rehearsal traffic separate from real readership statistics. Restore ingestion st
 with its matching database; verify rotated and replayed logs do not double totals.
 Raw logs are excluded from the portable backup capture; include separately only
 when required by your chosen policy. See [operator manual](operator-manual.md).
+
+Daily grouping uses the published site's configured IANA timezone and the dashboard
+shows the timezone stored with those aggregates. Once counts exist, changing that
+timezone is rejected; use a separate analytics state directory rather than mix
+incompatible day boundaries. Older databases without a timezone setting retain
+the previous grouping until an operator deliberately replaces that store.

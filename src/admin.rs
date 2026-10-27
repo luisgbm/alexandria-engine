@@ -889,7 +889,7 @@ async fn session(
     let credential_count = count_credentials(&app.db.lock().unwrap())?;
     let site = &app.store.lock().unwrap().site;
     Ok(Json(
-        serde_json::json!({"csrf":csrf,"expires_in":SESSION_SECONDS,"credentials":credential_count,"site":{"title":site.title,"categories":site.categories,"timezone":site.timezone},"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label}),
+        serde_json::json!({"csrf":csrf,"expires_in":SESSION_SECONDS,"credentials":credential_count,"site":{"title":site.title,"categories":site.categories,"timezone":site.timezone,"article_path_prefix":site.article_path_prefix},"staging":app.environment == "staging","environment":app.environment,"environment_label":app.environment_label}),
     ))
 }
 #[derive(Deserialize)]
@@ -1252,7 +1252,7 @@ async fn create_entry(
         permalink: Some(if kind == "page" {
             format!("/nova-pagina-{}/", &uuid[..12])
         } else {
-            format!("/artigos/novo-{}/", &uuid[..12])
+            format!("{}novo-{}/", store.site.article_path_prefix, &uuid[..12])
         }),
         categories: if kind == "page" {
             vec![]
@@ -1261,9 +1261,7 @@ async fn create_entry(
                 store
                     .site
                     .categories
-                    .iter()
-                    .find(|c| c.slug == "artigos")
-                    .or_else(|| store.site.categories.first())
+                    .first()
                     .ok_or_else(|| bad("Crie uma categoria primeiro."))?
                     .slug
                     .clone(),

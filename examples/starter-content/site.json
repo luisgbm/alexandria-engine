@@ -28,5 +28,6 @@
   "redirects": {},
   "expected_missing": [],
   "observed_paths": [],
-  "banner": null
+  "banner": null,
+  "article_path_prefix": "/articles/"
 }

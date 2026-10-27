@@ -2310,3 +2310,70 @@ fn heavy_upload_and_publish_jobs_share_a_single_admission_slot() {
     drop(permit);
     assert!(app.publish_slots.clone().try_acquire_owned().is_ok());
 }
+
+#[tokio::test]
+async fn native_publication_uses_configured_prefix_timezone_and_category_order() {
+    let (_temp, app) = fixture();
+    {
+        let mut store = app.store.lock().unwrap();
+        store.site.article_path_prefix = "/journal/posts/".into();
+        store.site.timezone = "Asia/Tokyo".into();
+        store.site.categories.insert(
+            0,
+            crate::model::Category {
+                id: "9".into(),
+                name: "Notes".into(),
+                slug: "notes".into(),
+                parent: "0".into(),
+            },
+        );
+    }
+    let (cookie, csrf) = authenticated(&app);
+    let (status, _, doc) = call(
+        &app,
+        "POST",
+        "/api/articles",
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        doc["metadata"]["permalink"]
+            .as_str()
+            .unwrap()
+            .starts_with("/journal/posts/")
+    );
+    assert_eq!(doc["metadata"]["categories"][0], "notes");
+    let id = doc["metadata"]["id"].as_str().unwrap();
+    let (status, _, suggestion) = call(
+        &app,
+        "POST",
+        &format!("/api/articles/{id}/permalink"),
+        Some(&cookie),
+        Some(&csrf),
+        serde_json::json!({"title":"A new title"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(suggestion["permalink"], "/journal/posts/a-new-title/");
+    let (_, _, session) = call(
+        &app,
+        "GET",
+        "/api/session",
+        Some(&cookie),
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(session["site"]["timezone"], "Asia/Tokyo");
+    assert_eq!(session["site"]["article_path_prefix"], "/journal/posts/");
+    assert_eq!(
+        app.store.lock().unwrap().entries["wp-1"]
+            .metadata
+            .permalink
+            .as_deref(),
+        Some("/artigos/original/")
+    );
+}

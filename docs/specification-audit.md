@@ -18,7 +18,7 @@ it is not the status report of a particular installation.
 | Integrity, retention and offline recovery | [Backups](backup-restore.md) |
 
 Current boundaries: a single administrator identity, Portuguese interface text,
-Ubuntu 24.04 x86-64/systemd as the supported complete host, fixed new-article URL
+Ubuntu 24.04 x86-64/systemd as the supported complete host, configurable new-article URL
 prefix, and no browser-based publication rename workflow. Analytics visitor totals
 are estimates. External alerting, DNS, certificates and device approval need
 installation-specific configuration or operator action.

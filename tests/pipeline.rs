@@ -487,7 +487,7 @@ fn regenerates_category_lists_and_rejects_invalid_metadata_schema() {
 
 #[test]
 fn wordpress_more_sets_the_home_cutoff_and_preserves_the_complete_article() {
-    for marker in ["<p><span id=\"more-3148\"></span></p>", "<!--more-->"] {
+    for marker in ["<p><span id=\"more-123\"></span></p>", "<!--more-->"] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let (archive, rendered, inventory) = fixture(root);
@@ -506,7 +506,7 @@ fn wordpress_more_sets_the_home_cutoff_and_preserves_the_complete_article() {
         import::run(&archive, &rendered, &inventory, &content).unwrap();
         let body = fs::read_to_string(content.join("articles/wp-1/body.html")).unwrap();
         assert!(body.contains("<!--more-->"));
-        assert!(!body.contains("more-3148"));
+        assert!(!body.contains("more-123"));
         let release = root.join("release");
         build::run(&content, &release).unwrap();
         let home = fs::read_to_string(release.join("public/index.html")).unwrap();
@@ -527,7 +527,7 @@ fn native_starter_builds_without_wordpress() {
     build::run(&content, &output).unwrap();
     let homepage = fs::read_to_string(output.join("public/index.html")).unwrap();
     assert!(homepage.contains("My publication"));
-    assert!(!homepage.contains("Example publication"));
+    assert!(homepage.contains("Powered by Alexandria Engine"));
     assert!(output.join("public/sitemap.xml").exists());
 }
 

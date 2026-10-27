@@ -1,4 +1,4 @@
-//! Staging log analytics: incremental checkpoints, idempotent requests, daily pseudonyms.
+//! Private log analytics: incremental checkpoints, idempotent requests, daily pseudonyms.
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -28,9 +28,13 @@ fn hash(bytes: &[u8]) -> String {
 fn database(state: &Path) -> Result<Connection> {
     fs::create_dir_all(state)?;
     fs::set_permissions(state, fs::Permissions::from_mode(0o700))?;
+    let fresh = !state.join("analytics.sqlite").exists();
     let db = Connection::open(state.join("analytics.sqlite"))?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
     db.execute_batch(SCHEMA)?;
+    if fresh {
+        db.execute("INSERT INTO settings VALUES('timezone','UTC')", [])?;
+    }
     db.execute(
         "INSERT OR IGNORE INTO settings VALUES('start',?1)",
         [Utc::now().timestamp().to_string()],
@@ -49,6 +53,36 @@ fn database(state: &Path) -> Result<Connection> {
     )?;
     Ok(db)
 }
+// Databases created before timezone tracking used this grouping. Preserve their
+// historical day boundaries until the operator starts a separate analytics store.
+const LEGACY_TIMEZONE: &str = "America/Sao_Paulo";
+
+fn timezone(db: &Connection) -> Result<chrono_tz::Tz> {
+    let name: Option<String> = db
+        .query_row("SELECT value FROM settings WHERE key='timezone'", [], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    name.as_deref()
+        .unwrap_or(LEGACY_TIMEZONE)
+        .parse()
+        .context("invalid analytics timezone")
+}
+
+fn bind_timezone(db: &Connection, requested: &str) -> Result<()> {
+    let zone: chrono_tz::Tz = requested.parse().context("invalid publication timezone")?;
+    let collected: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM daily)", [], |r| r.get(0))?;
+    ensure!(
+        !collected || timezone(db)? == zone,
+        "analytics timezone changed; use a separate analytics state directory to preserve historical day boundaries"
+    );
+    db.execute(
+        "INSERT OR REPLACE INTO settings VALUES('timezone',?1)",
+        [zone.name()],
+    )?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct Log {
     id: String,
@@ -94,7 +128,7 @@ fn route_catalog(db: &Connection, site_root: &Path) -> Result<()> {
     let releases = fs::canonicalize(site_root.join("releases"))?;
     ensure!(
         active.starts_with(releases),
-        "active release outside staging root"
+        "active release outside publisher root"
     );
     let id = active
         .parent()
@@ -170,7 +204,18 @@ fn visitor(secret: &str, day: &str, ip: &str, ua: &str) -> String {
     }
     hash(&bytes)
 }
+#[cfg(test)]
 fn count_line(db: &Connection, line: &[u8], secret: &str, start: i64, now: i64) -> Result<bool> {
+    count_line_in_timezone(db, line, secret, start, now, timezone(db)?)
+}
+fn count_line_in_timezone(
+    db: &Connection,
+    line: &[u8],
+    secret: &str,
+    start: i64,
+    now: i64,
+    zone: chrono_tz::Tz,
+) -> Result<bool> {
     let Ok(log) = serde_json::from_slice::<Log>(line) else {
         return Ok(false);
     };
@@ -184,10 +229,7 @@ fn count_line(db: &Connection, line: &[u8], secret: &str, start: i64, now: i64) 
     if ts < start || ts < now - 8 * 86400 || ts > now + 300 {
         return Ok(false);
     }
-    let day = date
-        .with_timezone(&chrono_tz::America::Sao_Paulo)
-        .format("%Y-%m-%d")
-        .to_string();
+    let day = date.with_timezone(&zone).format("%Y-%m-%d").to_string();
     if db.execute(
         "INSERT OR IGNORE INTO processed VALUES(?1,?2)",
         params![log.id, day],
@@ -237,6 +279,7 @@ fn count_line(db: &Connection, line: &[u8], secret: &str, start: i64, now: i64) 
     Ok(true)
 }
 fn scan_file(db: &Connection, path: &Path, secret: &str, start: i64, now: i64) -> Result<usize> {
+    let zone = timezone(db)?;
     let metadata = fs::metadata(path)?;
     let compressed = path.extension().and_then(|s| s.to_str()) == Some("gz");
     let reader = || -> Result<Box<dyn Read>> {
@@ -292,7 +335,7 @@ fn scan_file(db: &Connection, path: &Path, secret: &str, start: i64, now: i64) -
         if !line.ends_with(b"\n") {
             break;
         }
-        if line.len() <= 65536 && count_line(db, &line, secret, start, now)? {
+        if line.len() <= 65536 && count_line_in_timezone(db, &line, secret, start, now, zone)? {
             count += 1;
         }
         offset += bytes as u64;
@@ -304,6 +347,13 @@ pub fn ingest(site_root: &Path, logs: &Path, state: &Path) -> Result<usize> {
     let mut db = database(state)?;
     let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     route_catalog(&tx, site_root)?;
+    let active = fs::canonicalize(site_root.join("current"))?;
+    let id = active
+        .parent()
+        .and_then(|p| p.file_name())
+        .context("invalid active release")?;
+    let site = crate::model::read_site(&site_root.join("snapshots").join(id).join("site.json"))?;
+    bind_timezone(&tx, &site.timezone)?;
     let secret: String =
         tx.query_row("SELECT value FROM settings WHERE key='secret'", [], |r| {
             r.get(0)
@@ -328,9 +378,7 @@ pub fn ingest(site_root: &Path, logs: &Path, state: &Path) -> Result<usize> {
     for file in files {
         count += scan_file(&tx, &file, &secret, start, now)?;
     }
-    let day = Utc::now()
-        .with_timezone(&chrono_tz::America::Sao_Paulo)
-        .date_naive();
+    let day = Utc::now().with_timezone(&timezone(&tx)?).date_naive();
     let cutoff = (day - Duration::days(35)).to_string();
     for table in ["processed", "recent", "visitors"] {
         tx.execute(&format!("DELETE FROM {table} WHERE day<?1"), [&cutoff])?;
@@ -359,9 +407,8 @@ pub fn report(path: &Path, period: &str) -> Result<serde_json::Value> {
     }
     let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
-    let today = Utc::now()
-        .with_timezone(&chrono_tz::America::Sao_Paulo)
-        .date_naive();
+    let zone = timezone(&db)?;
+    let today = Utc::now().with_timezone(&zone).date_naive();
     let since = today - Duration::days(days - 1);
     let start: String = db.query_row("SELECT value FROM settings WHERE key='start'", [], |r| {
         r.get(0)
@@ -395,15 +442,48 @@ pub fn report(path: &Path, period: &str) -> Result<serde_json::Value> {
     let mut statement=db.prepare("SELECT d.path,r.title,SUM(d.views),SUM(d.visitors) FROM daily d JOIN routes r ON r.path=d.path WHERE r.kind='post' AND d.day BETWEEN ?1 AND ?2 GROUP BY d.path,r.title ORDER BY SUM(d.views) DESC,d.path LIMIT 10")?;
     let top=statement.query_map(params![since.to_string(),today.to_string()],|r|Ok(serde_json::json!({"path":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"views":r.get::<_,i64>(2)?,"visitors":r.get::<_,i64>(3)?})))?.collect::<std::result::Result<Vec<_>,_>>()?;
     Ok(
-        serde_json::json!({"enabled":true,"period":period,"timezone":"America/Sao_Paulo","start":start.parse::<i64>()?,"last_ingested":updated.and_then(|s|s.parse::<i64>().ok()),"views":total,"visitor_days":visitor_days,"series":series,"top_articles":top,"raw_retention_days":7,"aggregate_retention_days":400}),
+        serde_json::json!({"enabled":true,"period":period,"timezone":zone.name(),"start":start.parse::<i64>()?,"last_ingested":updated.and_then(|s|s.parse::<i64>().ok()),"views":total,"visitor_days":visitor_days,"series":series,"top_articles":top,"raw_retention_days":7,"aggregate_retention_days":400}),
     )
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    #[test]
+    fn configured_timezone_controls_days_and_cannot_regroup_existing_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = database(tmp.path()).unwrap();
+        bind_timezone(&db, "Pacific/Auckland").unwrap();
+        db.execute(
+            "INSERT INTO routes VALUES('/article/','Article','post')",
+            [],
+        )
+        .unwrap();
+        let time = "2026-01-01T12:30:00Z";
+        let now = DateTime::parse_from_rfc3339(time).unwrap().timestamp();
+        let event = serde_json::to_vec(&serde_json::json!({"id":"12345678901234567890123456789012","time":time,"ip":"192.0.2.1","method":"GET","uri":"/article/","status":"200","ua":"Mozilla/5.0"})).unwrap();
+        assert!(count_line(&db, &event, "secret", now - 1, now).unwrap());
+        let day: String = db
+            .query_row("SELECT day FROM daily WHERE path='*'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(day, "2026-01-02");
+        assert!(bind_timezone(&db, "UTC").is_err());
+        assert_eq!(timezone(&db).unwrap().name(), "Pacific/Auckland");
+    }
+    #[test]
+    fn databases_without_timezone_keep_legacy_day_boundaries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = database(tmp.path()).unwrap();
+        db.execute("DELETE FROM settings WHERE key='timezone'", [])
+            .unwrap();
+        db.execute("INSERT INTO daily VALUES('2026-01-01','*',1,1)", [])
+            .unwrap();
+        assert_eq!(timezone(&db).unwrap().name(), LEGACY_TIMEZONE);
+        assert!(bind_timezone(&db, "UTC").is_err());
+        bind_timezone(&db, LEGACY_TIMEZONE).unwrap();
+    }
     fn line(id: u32, offset: i64, ua: &str, path: &str) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({"id":format!("{id:032x}"),"time":Utc.timestamp_opt(Utc::now().timestamp()+offset,0).unwrap().to_rfc3339(),"ip":"192.0.2.4","method":"GET","status":"200","uri":path,"ua":ua})).unwrap()
+        serde_json::to_vec(&serde_json::json!({"id":format!("{id:032x}"),"time":Utc.timestamp_opt(1_800_000_000+offset,0).unwrap().to_rfc3339(),"ip":"192.0.2.4","method":"GET","status":"200","uri":path,"ua":ua})).unwrap()
     }
     #[test]
     fn filters_bots_assets_duplicates_and_keeps_daily_counts_idempotent() {
@@ -414,7 +494,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let now = Utc::now().timestamp();
+        let now = 1_800_000_000;
         assert!(
             count_line(
                 &db,
@@ -505,7 +585,7 @@ mod tests {
         let file = tmp.path().join("access.jsonl");
         let mut bytes = line(11, 0, "Mozilla/5.0", "/article/");
         fs::write(&file, &bytes).unwrap();
-        let now = Utc::now().timestamp();
+        let now = 1_800_000_000;
         assert_eq!(scan_file(&db, &file, "secret", now - 100, now).unwrap(), 0);
         bytes.push(b'\n');
         fs::write(&file, &bytes).unwrap();
@@ -529,9 +609,7 @@ mod tests {
     fn report_windows_keep_daily_estimates_and_top_articles_consistent() {
         let tmp = tempfile::tempdir().unwrap();
         let db = database(tmp.path()).unwrap();
-        let today = Utc::now()
-            .with_timezone(&chrono_tz::America::Sao_Paulo)
-            .date_naive();
+        let today = Utc::now().with_timezone(&chrono_tz::UTC).date_naive();
         db.execute(
             "INSERT INTO routes VALUES('/article/','Article','post')",
             [],

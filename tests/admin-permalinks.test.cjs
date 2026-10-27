@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../admin/admin.js'), 'utf8');
 const block = source.slice(source.indexOf('  let autoPermalink=true'), source.indexOf('  function fields()'));
 
-function editor() {
+function editor(prefix = "/artigos/") {
   const nodes = Object.fromEntries(['title', 'permalink', 'path-hint'].map(id => [id, {
     value: '', readOnly: false, handlers: {}, addEventListener(event, fn) { this.handlers[event] = fn; }
   }]));
   let timer, request;
   const context = vm.createContext({
-    $: id => nodes[id], doc: {metadata: {id: 'draft-1', kind: 'post'}},
+    articlePathPrefix: prefix, $: id => nodes[id], doc: {metadata: {id: 'draft-1', kind: 'post'}},
     clearTimeout: () => {timer = null;}, setTimeout: fn => {timer = fn; return 1;},
     schedulePreview() {}, api: () => new Promise(resolve => {request = resolve;})
   });
@@ -41,4 +41,11 @@ test('published addresses stay unchanged and pages use a root URL', () => {
   e.type('New title'); assert.equal(e.nodes.permalink.value, '/existing/');
   e.nodes.permalink.readOnly = false; e.context.doc.metadata.kind = 'page';
   e.type('Minha Página'); assert.equal(e.nodes.permalink.value, '/minha-pagina/');
+});
+
+test('configured article prefix is used while pages remain at the root', () => {
+ const e=editor('/journal/posts/');e.type('A custom title');
+ assert.equal(e.nodes.permalink.value,'/journal/posts/a-custom-title/');
+ e.context.doc.metadata.kind='page';e.type('About');
+ assert.equal(e.nodes.permalink.value,'/about/');
 });

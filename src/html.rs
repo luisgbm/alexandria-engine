@@ -499,8 +499,8 @@ mod tests {
     #[test]
     fn more_markers_survive_sanitization_and_normalize_without_empty_paragraphs() {
         for marker in [
-            "<p><span id=\"more-3148\"></span></p>",
-            "<span id='more-3148'></span>",
+            "<p><span id=\"more-123\"></span></p>",
+            "<span id='more-123'></span>",
             "<!--more-->",
             "<!-- more Read on -->",
         ] {
@@ -509,7 +509,7 @@ mod tests {
             let clean = sanitize(&input, BASE);
             assert_eq!(clean, "<p>Before <em>cut</em>.</p><!--more--><p>After.</p>");
             assert_eq!(sanitize(&clean, BASE), clean);
-            assert!(!normalize_more(&input).contains("more-3148"));
+            assert!(!normalize_more(&input).contains("more-123"));
         }
         assert_eq!(
             sanitize("<!--more--><p>Body</p>", BASE),

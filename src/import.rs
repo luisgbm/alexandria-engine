@@ -776,6 +776,7 @@ fn import_into(archive: &Path, config: &Options<'_>, output: &Path) -> Result<()
             .into(),
         base_url: base,
         timezone,
+        article_path_prefix: crate::model::default_article_prefix(),
         page_size: options
             .get("posts_per_page")
             .and_then(|s| s.parse().ok())

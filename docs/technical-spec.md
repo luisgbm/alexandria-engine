@@ -56,7 +56,8 @@ INSTANCE/
 ```
 
 The publication title is configurable independently of the engine name. New
-article titles suggest `/artigos/<slug>/` with a collision suffix where needed.
+article titles suggest addresses under `site.json.article_path_prefix`, with a
+collision suffix where needed. The omitted-setting default remains `/artigos/`.
 Published addresses are protected; static generation never silently derives new
 URLs from edited titles. Migration preserves accepted paths and explicit aliases.
 

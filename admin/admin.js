@@ -4,7 +4,7 @@
 
   const $ = id => document.getElementById(id);
 
-  let siteTitle="Alexandria";
+  let siteTitle="Alexandria", siteTimezone="UTC", articlePathPrefix="/artigos/";
   let contentSection="post";
   let sidebarRevision="", sidebarDirty=false;
   let deployment = null, catalogRevision = "", selectedRevision = null;
@@ -161,6 +161,10 @@
   }
   function identity(data) {
     siteTitle=data.site?.title || data.site_title || siteTitle;
+    siteTimezone=data.site?.timezone || siteTimezone;
+    articlePathPrefix=data.site?.article_path_prefix || articlePathPrefix;
+    $("publication-timezone").textContent=`Data original · ${siteTimezone}`;
+    $("permalink").placeholder=`${articlePathPrefix}titulo/`;
     $("site-name").textContent=siteTitle;updateAdminTitle();
     environment = data.environment; environmentLabel = data.environment_label;
     $("environment-badge").textContent = environmentLabel;
@@ -223,7 +227,7 @@
     try {const data=await api(`/api/analytics?period=${encodeURIComponent($("analytics-period").value)}`);if(generation!==analyticsGeneration)return;
       if(!data.enabled){$("analytics-status").textContent="As estatísticas ainda não foram ativadas neste ambiente.";return;}
       $("analytics-views").textContent=data.views.toLocaleString("pt-BR");$("analytics-visitors").textContent=data.visitor_days.toLocaleString("pt-BR");
-      $("analytics-status").textContent=`Coleta iniciada em ${new Date(data.start*1000).toLocaleString("pt-BR")} · ${data.last_ingested ? "Última leitura: "+new Date(data.last_ingested*1000).toLocaleString("pt-BR") : "Aguardando primeira leitura"} · Horário de Brasília`;
+      $("analytics-status").textContent=`Coleta iniciada em ${new Date(data.start*1000).toLocaleString("pt-BR",{timeZone:data.timezone || siteTimezone})} · ${data.last_ingested ? "Última leitura: "+new Date(data.last_ingested*1000).toLocaleString("pt-BR",{timeZone:data.timezone || siteTimezone}) : "Aguardando primeira leitura"} · ${data.timezone || siteTimezone}`;
       $("analytics-chart").replaceChildren();const max=Math.max(1,...data.series.map(d=>d.views));
       for(const point of data.series){const column=document.createElement("div"),bar=document.createElement("div"),label=document.createElement("span");column.className="analytics-column";bar.className="analytics-bar";bar.style.height=`${point.views ? Math.max(3,point.views/max*120) : 1}px`;bar.title=`${point.date}: ${point.views} visualizações, ${point.visitors} visitantes-dia`;bar.setAttribute("role","img");bar.setAttribute("aria-label",bar.title);label.textContent=point.date.slice(5).split("-").reverse().join("/");column.append(bar,label);$("analytics-chart").append(column);}
       $("analytics-top").replaceChildren();for(const article of data.top_articles){const row=document.createElement("tr"),name=document.createElement("td"),views=document.createElement("td"),visitors=document.createElement("td");name.textContent=article.title;views.textContent=article.views.toLocaleString("pt-BR");visitors.textContent=article.visitors.toLocaleString("pt-BR");row.append(name,views,visitors);$("analytics-top").append(row);}
@@ -510,7 +514,7 @@
   let autoPermalink=true, permalinkTimer, permalinkGeneration=0;
   function titlePermalink(title,kind){
     const slug=title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/[^a-z0-9]+/).filter(Boolean).join("-").slice(0,200).replace(/-+$/,"")||"sem-titulo";
-    return `${kind==="page" ? "/" : "/artigos/"}${slug}/`;
+    return `${kind==="page" ? "/" : articlePathPrefix}${slug}/`;
   }
   $("title").addEventListener("input",()=>{
     clearTimeout(permalinkTimer);const generation=++permalinkGeneration;

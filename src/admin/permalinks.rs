@@ -34,7 +34,7 @@ pub(super) fn available(
     let prefix = if document.metadata.kind == "page" {
         "/"
     } else {
-        "/artigos/"
+        &store.site.article_path_prefix
     };
     let base = format!("{prefix}{slug}");
     let mut occupied = std::collections::BTreeSet::new();
@@ -67,11 +67,11 @@ pub(super) fn available(
             "/assets/",
             "/uploads/",
             "/wp-content/",
-            "/artigos/",
             "/page/",
         ]
         .map(String::from),
     );
+    occupied.insert(store.site.article_path_prefix.clone());
     // Treat slash variants as the same address.
     let occupied: std::collections::BTreeSet<_> =
         occupied.iter().map(|p| p.trim_end_matches('/')).collect();

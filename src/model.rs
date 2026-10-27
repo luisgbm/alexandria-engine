@@ -23,7 +23,41 @@ pub fn validate_schema(value: &serde_json::Value, schema: &str) -> Result<()> {
 pub fn read_site(path: &Path) -> Result<Site> {
     let value: serde_json::Value = read_json(path)?;
     validate_schema(&value, include_str!("../schemas/site-v1.schema.json"))?;
-    Ok(serde_json::from_value(value)?)
+    let site: Site = serde_json::from_value(value)?;
+    validate_article_prefix(&site.article_path_prefix)?;
+    Ok(site)
+}
+
+pub fn default_article_prefix() -> String {
+    "/artigos/".into()
+}
+
+fn validate_article_prefix(prefix: &str) -> Result<()> {
+    let valid = regex::Regex::new(r"^/(?:[A-Za-z0-9_-]+/)*$")?;
+    anyhow::ensure!(
+        valid.is_match(prefix),
+        "article_path_prefix must be a slash-delimited path"
+    );
+    let first = prefix
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("");
+    anyhow::ensure!(
+        ![
+            "assets",
+            "uploads",
+            "wp-content",
+            "category",
+            "author",
+            "search",
+            "feed",
+            "page"
+        ]
+        .contains(&first),
+        "article_path_prefix conflicts with a reserved route"
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +87,8 @@ pub struct Site {
     pub title: String,
     pub base_url: String,
     pub timezone: String,
+    #[serde(default = "default_article_prefix")]
+    pub article_path_prefix: String,
     pub page_size: usize,
     pub categories: Vec<Category>,
     pub authors: Vec<Author>,
@@ -188,6 +224,23 @@ pub fn load_entries(root: &Path) -> Result<Vec<Entry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn article_prefix_configuration_is_safe_and_backwards_compatible() {
+        assert_eq!(default_article_prefix(), "/artigos/");
+        for prefix in ["/", "/articles/", "/journal/posts/"] {
+            assert!(validate_article_prefix(prefix).is_ok());
+        }
+        for prefix in [
+            "articles/",
+            "/articles",
+            "//evil/",
+            "/../",
+            "/assets/posts/",
+            "/a?x/",
+        ] {
+            assert!(validate_article_prefix(prefix).is_err(), "{prefix}");
+        }
+    }
     #[test]
     fn rejects_traversal_across_platforms() {
         for p in [
