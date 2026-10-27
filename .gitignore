@@ -7,3 +7,6 @@
 *.tar.gz
 .env
 __pycache__/
+
+# Private chat attachments are not project assets.
+.codex-remote-attachments/
