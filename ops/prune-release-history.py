@@ -250,6 +250,25 @@ def prune(root, entries, receipt, keep_previous=5, apply=False):
     return report
 
 
+def publisher_entries(entries, root, prefix):
+    """Rebase only publisher rows after verifying the unchanged capture manifest."""
+    if not prefix:
+        return entries
+    require(re.fullmatch('[A-Za-z0-9_./-]+/', prefix) and not prefix.startswith('/')
+            and not any(part in ('.','..','') for part in prefix.rstrip('/').split('/')),
+            'Invalid manifest prefix')
+    target = root.as_posix().lstrip('/') + '/'
+    result = {}
+    for key,row in entries.items():
+        if not key.startswith(prefix):
+            continue
+        suffix = key[len(prefix):]
+        require(suffix and not any(part in ('','.','..') for part in suffix.split('/')) and '\\' not in suffix,
+                'Unsafe publisher manifest path')
+        result[target + suffix] = row
+    return result
+
+
 def main():
     import fcntl
     parser = argparse.ArgumentParser(description=__doc__)
@@ -257,11 +276,12 @@ def main():
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--password-file', type=Path, required=True)
     parser.add_argument('--capture-root', required=True)
-    parser.add_argument('--backup-lock', type=Path, default=Path('/var/cache/alexandria-backup/run.lock'))
+    parser.add_argument('--backup-lock', type=Path, required=True)
     parser.add_argument('--keep-previous', type=int, default=5)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--record-coverage-only', action='store_true')
-    parser.add_argument('--engine', type=Path, default=Path('/opt/alexandria/admin-staging/alexandria-engine'))
+    parser.add_argument('--engine', type=Path, required=True)
+    parser.add_argument('--manifest-prefix', default='', help='Publisher prefix inside a portable capture, e.g. instance/publish/')
     args = parser.parse_args()
     require(os.geteuid() == 0, 'Root required')
     os.umask(0o077)
@@ -274,6 +294,8 @@ def main():
         body = subprocess.check_output(['restic', '--repo', str(args.repo), '--password-file', str(args.password_file),
                                        'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/manifest.json'])
         entries = verified_manifest(receipt, body)
+        source_prefix = args.manifest_prefix
+        entries = publisher_entries(entries, args.root, source_prefix)
         archived = None
         database_key = args.root.as_posix().lstrip('/') + '/.history.sqlite'
         if database_key in entries:
@@ -281,7 +303,7 @@ def main():
                 database = Path(scratch) / 'history.sqlite'
                 with database.open('xb') as stream:
                     subprocess.run(['restic', '--repo', str(args.repo), '--password-file', str(args.password_file),
-                                    'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/' + database_key],
+                                    'dump', receipt['snapshot_id'], args.capture_root.rstrip('/') + '/' + (source_prefix + '.history.sqlite' if source_prefix else database_key)],
                                    stdout=stream, check=True)
                 archived = archived_coverage(database, args.root, entries)
         catalog = coverage_catalog(args.root, entries, receipt, archived)

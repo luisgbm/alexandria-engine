@@ -1,0 +1,8 @@
+{
+  "ssh_host": "your-vps",
+  "remote_program": "/srv/alexandria-instances/publication-stage/bin/portable.py",
+  "remote_config": "/srv/alexandria-instances/publication-stage/etc/deployment.json",
+  "backup_root": "C:/private/alexandria-backups",
+  "password_file": "C:/separate-recovery/restic-password.txt",
+  "restic": "C:/tools/restic.exe"
+}

@@ -7,7 +7,7 @@ import unittest
 
 if sys.platform == 'linux':
     spec = importlib.util.spec_from_file_location(
-        'backup', Path(__file__).resolve().parents[1] / 'ops/backup-staging.py')
+        'backup', Path(__file__).resolve().parents[1] / 'ops/portable.py')
     backup = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backup)
 
@@ -21,7 +21,7 @@ class CaptureTests(unittest.TestCase):
             image=source/'content/media/image.jpg';image.write_bytes(b'original')
             database=source/'state/admin.sqlite';database.write_bytes(b'database')
             text=source/'content/editorial/draft';text.write_bytes(b'draft')
-            backup.copy_admin_tree(source,target)
+            backup.capture_data(source,target)
             self.assertEqual(image.stat().st_ino,(target/'content/media/image.jpg').stat().st_ino)
             self.assertNotEqual(database.stat().st_ino,(target/'state/admin.sqlite').stat().st_ino)
             text.write_bytes(b'edited');database.write_bytes(b'updated');image.unlink()
@@ -38,7 +38,7 @@ class CaptureTests(unittest.TestCase):
                 (source / name / 'test').write_text(name)
             (source / 'current').symlink_to(source / 'releases')
             (source / '.history.sqlite').write_bytes(b'compact history database')
-            backup.copy_publisher(source, target)
+            backup.capture_publisher(source, target)
             self.assertNotEqual((source / '.history.sqlite').stat().st_ino,
                                 (target / '.history.sqlite').stat().st_ino)
             (source / '.history.sqlite').write_bytes(b'later publication')
@@ -62,5 +62,5 @@ class CaptureTests(unittest.TestCase):
                     (source / 'snapshots/state.sqlite').write_text('database')
                 else:
                     (source / 'snapshots/link').symlink_to(root / 'elsewhere')
-                with self.assertRaises(RuntimeError):
-                    backup.copy_publisher(source, root / 'capture')
+                with self.assertRaises(ValueError):
+                    backup.capture_publisher(source, root / 'capture')

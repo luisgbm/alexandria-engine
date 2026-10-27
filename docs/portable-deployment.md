@@ -1,13 +1,13 @@
 # Portable deployment and recovery
 
-Use `ops/portable.py` for new installations. It needs no Azure account, metadata
+Use `ops/portable.py` for new installations. It needs no provider account, metadata
 endpoint, managed identity, storage service or cloud CLI. The supported target
 is currently **Ubuntu 24.04, x86-64, systemd**; provider-neutral does not imply
 support for every OS or CPU. Build the Linux binary with `cargo build --release
 --locked` on a compatible machine. Preserve its SHA-256 alongside the release.
 
-Use the portable installer for new instances. Older scripts with fixed hosts or
-paths are development fixtures, not a provisioning interface.
+Use the portable installer for new instances and the [operator tool catalog](../scripts/README.md)
+for configurable backup, recovery and validation helpers.
 
 ## Prepare and review
 

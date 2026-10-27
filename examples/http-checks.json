@@ -1,0 +1,24 @@
+[
+  {
+    "path": "/",
+    "status": 200,
+    "contains": [
+      "My publication"
+    ],
+    "headers": {
+      "X-Content-Type-Options": "nosniff"
+    }
+  },
+  {
+    "path": "/wp-sitemap.xml",
+    "status": 200
+  },
+  {
+    "path": "/feed/",
+    "status": 404
+  },
+  {
+    "path": "/state/admin.sqlite",
+    "status": 404
+  }
+]

@@ -29,8 +29,8 @@ tool, not a requirement for running Alexandria.
   verified PC copies, restore procedures, service hardening and health checks.
 
 The current admin and default interface text are in Portuguese. The supported
-full deployment target is **Ubuntu 24.04 x86-64 with systemd**. The installer is
-provider-neutral and does not require Azure or another cloud account.
+full deployment target is **Ubuntu 24.04 x86-64 with systemd**. The installer
+works on supported VPS and dedicated servers, regardless of hosting provider.
 
 ## Start a new publication
 
@@ -138,6 +138,9 @@ and source snapshots support rollback without publishing unfinished drafts.
 Only the active version stays expanded. Older versions share compressed,
 content-addressed files and directory records in a private history database,
 so each publication stores its changes without another full directory tree.
+
+See the [operator tool catalog](scripts/README.md) for configurable backup, recovery
+and HTTP validation commands and sample JSON inputs.
 
 ## Development
 

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "title": "My publication",
   "base_url": "https://www.example.org",
-  "timezone": "America/Sao_Paulo",
+  "timezone": "UTC",
   "page_size": 10,
   "categories": [
     {

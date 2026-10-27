@@ -222,9 +222,9 @@ def main():
 
     detail('RSS endpoint policy', feed)
     detail('Sitemap publication coverage', sitemap)
-    for path, relative in [('/', 'index.html'), ('/poesias/prece/', 'poesias/prece/index.html'),
-                           ('/livros/', 'livros/index.html'), ('/artigos/', 'artigos/index.html'),
-                           ('/assets/search.js', 'assets/search.js'), ('/search/index.json', 'search/index.json')]:
+    samples = [('/', 'index.html'),('/assets/search.js','assets/search.js'),('/search/index.json','search/index.json')]
+    samples += [(n['path'],n['path'].lstrip('/')+'index.html') for n in site['navigation'] if n['path']!='/' and n['path'].endswith('/')]
+    for path, relative in samples:
         file = public / relative
         if file.is_file():
             detail('Exact served bytes: ' + path, lambda p=path, f=file: exact_file(p, f))

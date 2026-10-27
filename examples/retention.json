@@ -1,0 +1,12 @@
+{
+  "ssh_host": "your-vps",
+  "snapshot_host": "ae-publication-stage-backup",
+  "remote_helper": "/private/ops/prune-release-history.py",
+  "publisher_root": "/srv/alexandria-instances/publication-stage/publish",
+  "remote_repo": "/srv/alexandria-instances/publication-stage/backup/repository",
+  "remote_password_file": "/srv/alexandria-instances/publication-stage/etc/restic-password",
+  "capture_root": "/srv/alexandria-instances/publication-stage/backup/capture",
+  "backup_lock": "/srv/alexandria-instances/publication-stage/backup/run.lock",
+  "engine": "/srv/alexandria-instances/publication-stage/bin/alexandria-engine",
+  "manifest_prefix": "instance/publish/"
+}
